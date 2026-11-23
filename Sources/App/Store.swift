@@ -17,12 +17,14 @@ final class Store: ObservableObject {
         }
     }
     @Published var error: String?
+
+    /// Inline renames. Drafts live here (not in the views) so a rename superseded by another action is saved, not lost.
     @Published var renamingProject: Int64?
     @Published var renamingGroup: Int64?
-    /// Rename drafts live here so a superseded rename is committed, not lost.
+    @Published var renamingColumn: Int64?
     @Published var projectDraft = ""
     @Published var groupDraft = ""
-    @Published var renamingColumn: Int64?
+    @Published var columnDraft = ""
 
     let db: DB
     private var version: Int64 = -1
@@ -64,7 +66,12 @@ final class Store: ObservableObject {
         }
     }
 
+    // MARK: - Loading
+
     var project: Project? { projects.first { $0.id == selected } }
+    func projects(in group: Int64?) -> [Project] { projects.filter { $0.group == group } }
+    func openCount(group: Int64) -> Int { projects(in: group).reduce(0) { $0 + (counts[$1.id] ?? 0) } }
+    func cardCount(_ col: Int64) -> Int { cards[col]?.count ?? 0 }
 
     private func poll() {
         if db.dataVersion() != version { reloadAll() }
@@ -75,9 +82,9 @@ final class Store: ObservableObject {
         defer { reloading = false }
         let v = db.dataVersion()
         do {
-            projects = try db.projects()
-            groups = try db.groups()
-            counts = try db.openCounts()
+            set(\.projects, try db.projects())
+            set(\.groups, try db.groups())
+            set(\.counts, try db.openCounts())
             if selected == nil || !projects.contains(where: { $0.id == selected }) {
                 selected = (try? db.currentProject().id) ?? projects.first?.id
             }
@@ -87,16 +94,52 @@ final class Store: ObservableObject {
     }
 
     private func loadBoard() {
-        guard let p = selected else { columns = []; cards = [:]; return }
+        guard let p = selected else { set(\.columns, []); set(\.cards, [:]); return }
         do {
-            columns = try db.columns(p)
-            cards = try db.board(p)
+            set(\.columns, try db.columns(p))
+            set(\.cards, try db.board(p))
         } catch { self.error = "\(error)" }
+    }
+
+    /// Publishes only real changes, so a reload doesn't make every list re-diff and flicker.
+    private func set<T: Equatable>(_ key: ReferenceWritableKeyPath<Store, T>, _ value: T) {
+        if self[keyPath: key] != value { self[keyPath: key] = value }
     }
 
     private func mutate(_ f: () throws -> Void) {
         do { try f() } catch { self.error = "\(error)" }
         reloadAll()
+    }
+
+    // MARK: - Renames
+
+    func startRename(_ p: Project) { commitRenames(); projectDraft = p.name; renamingProject = p.id }
+    func startRename(_ g: ProjectGroup) { commitRenames(); groupDraft = g.name; renamingGroup = g.id }
+    func startRename(_ c: Column) { commitRenames(); columnDraft = c.name; renamingColumn = c.id }
+
+    /// Saves whatever rename is in progress.
+    func commitRenames() {
+        if let id = renamingProject { renameProject(id) }
+        if let id = renamingGroup { renameGroup(id) }
+        if let id = renamingColumn { renameColumn(id) }
+    }
+
+    func renameProject(_ id: Int64) {
+        renamingProject = nil
+        if let n = Store.trimmed(projectDraft) { mutate { try db.renameProject(id, n) } }
+    }
+    func renameGroup(_ id: Int64) {
+        renamingGroup = nil
+        if let n = Store.trimmed(groupDraft) { mutate { try db.renameGroup(id, n) } }
+    }
+    func renameColumn(_ id: Int64) {
+        renamingColumn = nil
+        if let n = Store.trimmed(columnDraft) { mutate { try db.renameColumn(id, n) } }
+    }
+
+    private static func trimmed(_ s: String) -> String? {
+        let n = s.trimmingCharacters(in: .whitespaces)
+        return n.isEmpty ? nil : n
     }
 
     // MARK: - Projects
@@ -105,113 +148,86 @@ final class Store: ObservableObject {
         commitRenames()
         mutate {
             let id = try db.addProject("Nouveau projet", group: group)
-            if let g = group { try db.setGroupCollapsed(g, false) }
+            try reveal(group)
             selected = id
             projectDraft = "Nouveau projet"
             renamingProject = id
         }
     }
 
-    func startRenameProject(_ p: Project) {
-        commitRenames()
-        projectDraft = p.name
-        renamingProject = p.id
-    }
+    func deleteProject(_ id: Int64) { mutate { try db.deleteProject(id, force: true) } }
 
-    func startRenameGroup(_ g: ProjectGroup) {
-        commitRenames()
-        groupDraft = g.name
-        renamingGroup = g.id
-    }
-
-    /// Saves whatever rename is in progress (project and/or group).
-    func commitRenames() {
-        if let p = renamingProject { renameProject(p, projectDraft) }
-        if let g = renamingGroup { renameGroup(g, groupDraft) }
-    }
-    func renameProject(_ id: Int64, _ name: String) {
-        let n = name.trimmingCharacters(in: .whitespaces)
-        renamingProject = nil
-        guard !n.isEmpty else { return }
-        mutate { try db.renameProject(id, n) }
-    }
-    func deleteProject(_ id: Int64) { mutate { try db.deleteProject(id) } }
     /// Reorder inside one sidebar section (`ids` = that section's projects, in order).
     func moveProjects(in ids: [Int64], from: IndexSet, to: Int) {
-        guard let i = from.first, i < ids.count, let last = ids.last else { return }
+        guard let i = from.first, i < ids.count else { return }
         let id = ids[i]
-        let all = projects.map(\.id)
-        guard let src = all.firstIndex(of: id),
-              let target = to < ids.count ? all.firstIndex(of: ids[to]) : all.firstIndex(of: last).map({ $0 + 1 }) else { return }
-        mutate { try db.moveProject(id, to: target > src ? target - 1 : target) }
+        let before = to < ids.count ? ids[to] : nil
+        mutate { try db.tx { try place(id, before: before, orAfter: ids.last) } }
     }
-
-    func projects(in group: Int64?) -> [Project] { projects.filter { $0.group == group } }
-    func openCount(group: Int64) -> Int { projects(in: group).reduce(0) { $0 + (counts[$1.id] ?? 0) } }
 
     // MARK: - Groups
 
-    @discardableResult
-    func newGroup() -> Int64? {
+    func newGroup() {
         commitRenames()
-        var id: Int64?
-        mutate {
-            let name = try db.freeGroupName("Nouveau groupe")
-            id = try db.addGroup(name)
-            groupDraft = name
-            renamingGroup = id
-        }
-        return id
+        mutate { _ = try createGroupForRename() }
     }
-    func renameGroup(_ id: Int64, _ name: String) {
-        let n = name.trimmingCharacters(in: .whitespaces)
-        renamingGroup = nil
-        guard !n.isEmpty else { return }
-        mutate { try db.renameGroup(id, n) }
+
+    /// Creates a group holding this project and starts renaming the group.
+    func moveToNewGroup(_ id: Int64) {
+        commitRenames()
+        mutate { try db.tx { try db.setProjectGroup(id, try createGroupForRename()) } }
     }
+
     func deleteGroup(_ id: Int64) { mutate { try db.deleteGroup(id) } }
     func setCollapsed(_ id: Int64, _ on: Bool) { mutate { try db.setGroupCollapsed(id, on) } }
-    func setGroup(_ project: Int64, _ group: Int64?) {
+
+    /// Moves projects into `group` (nil = out of any group).
+    func setGroup(_ ids: [Int64], _ group: Int64?) {
+        guard !ids.isEmpty else { return }
+        commitRenames()
         mutate {
-            try db.setProjectGroup(project, group)
-            if let g = group { try db.setGroupCollapsed(g, false) }
+            try db.tx {
+                for id in ids { try db.setProjectGroup(id, group) }
+                try reveal(group)
+            }
         }
     }
 
-    /// Drop project(s) onto another project: joins its group, or creates a new group holding both (like iOS folders).
+    /// Drop on a section header: join that group (nil = "Projets", i.e. ungrouped).
+    @discardableResult
+    func dropProjects(_ payload: [String], into group: Int64?) -> Bool {
+        let ids = projectIds(payload)
+        setGroup(ids, group)
+        return !ids.isEmpty
+    }
+
+    /// Drop project(s) on another project, like iOS folders:
+    /// grouped → ungrouped target: leave the group, placed just before the target;
+    /// target in a group: join it; both ungrouped: create a group holding both.
     @discardableResult
     func dropProjects(_ payload: [String], onto target: Project) -> Bool {
-        let ids = payload.compactMap { $0.hasPrefix(Store.projectDragPrefix) ? Int64($0.dropFirst(Store.projectDragPrefix.count)) : nil }
-            .filter { id in id != target.id && projects.contains { $0.id == id } }
+        let ids = projectIds(payload).filter { $0 != target.id }
         guard !ids.isEmpty else { return false }
         commitRenames()
-        // Grouped project(s) dropped on an ungrouped one: take them out of their group, placed just before the target.
-        if target.group == nil, ids.allSatisfy({ id in projects.first { $0.id == id }?.group != nil }) {
-            mutate {
-                try db.tx {
-                    for id in ids {
-                        try db.setProjectGroup(id, nil)
-                        let order = try db.projects().map(\.id).filter { $0 != id }
-                        try db.moveProject(id, to: order.firstIndex(of: target.id) ?? order.count)
-                    }
-                }
-            }
-            return true
-        }
+        let leaving = target.group == nil && ids.allSatisfy { id in projects.first { $0.id == id }?.group != nil }
         mutate {
             try db.tx {
+                if leaving {
+                    for id in ids {
+                        try db.setProjectGroup(id, nil)
+                        try place(id, before: target.id, orAfter: nil)
+                    }
+                    return
+                }
                 let gid: Int64
                 if let g = target.group {
                     gid = g
                 } else {
-                    let name = try db.freeGroupName("Nouveau groupe")
-                    gid = try db.addGroup(name)
+                    gid = try createGroupForRename()
                     try db.setProjectGroup(target.id, gid)
-                    groupDraft = name
-                    renamingGroup = gid
                 }
                 for id in ids { try db.setProjectGroup(id, gid) }
-                try db.setGroupCollapsed(gid, false)
+                try reveal(gid)
             }
         }
         return true
@@ -220,59 +236,68 @@ final class Store: ObservableObject {
     /// Native List insertion: a project dropped between rows of a section joins that section's group
     /// (nil = ungrouped) at that position. This is what makes "drag out of a group" work reliably.
     func insertProject(payload: String, group: Int64?, at index: Int, sectionIds: [Int64]) {
-        guard payload.hasPrefix(Store.projectDragPrefix),
-              let id = Int64(payload.dropFirst(Store.projectDragPrefix.count)),
-              projects.contains(where: { $0.id == id }) else { return }
+        guard let id = projectIds([payload]).first else { return }
         commitRenames()
-        let others = sectionIds.filter { $0 != id }
-        let before: Int64? = index < sectionIds.count ? sectionIds[index] : nil
+        let before = index < sectionIds.count ? sectionIds[index] : nil
         mutate {
             try db.tx {
                 try db.setProjectGroup(id, group)
-                if let g = group { try db.setGroupCollapsed(g, false) }
-                let order = try db.projects().map(\.id).filter { $0 != id }
-                let target: Int
-                if let b = before, b != id, let i = order.firstIndex(of: b) { target = i }
-                else if let last = others.last, let i = order.firstIndex(of: last) { target = i + 1 }
-                else { target = order.count }
-                try db.moveProject(id, to: target)
+                try reveal(group)
+                try place(id, before: before, orAfter: sectionIds.filter { $0 != id }.last)
             }
         }
     }
 
-    /// Sidebar drag payloads are "kanban-project:<id>".
-    static let projectDragPrefix = "kanban-project:"
-    @discardableResult
-    func dropProjects(_ payload: [String], into group: Int64?) -> Bool {
-        let ids = payload.compactMap { $0.hasPrefix(Store.projectDragPrefix) ? Int64($0.dropFirst(Store.projectDragPrefix.count)) : nil }
-            .filter { id in projects.contains { $0.id == id } }
-        guard !ids.isEmpty else { return false }
-        mutate {
-            for id in ids { try db.setProjectGroup(id, group) }
-            if let g = group { try db.setGroupCollapsed(g, false) }
-        }
-        return true
+    // MARK: Project helpers (call inside mutate / tx)
+
+    private func createGroupForRename() throws -> Int64 {
+        let name = try db.freeGroupName("Nouveau groupe")
+        let id = try db.addGroup(name)
+        groupDraft = name
+        renamingGroup = id
+        return id
+    }
+
+    /// Expands a group so the project that just moved into it is visible.
+    private func reveal(_ group: Int64?) throws {
+        if let g = group { try db.setGroupCollapsed(g, false) }
+    }
+
+    /// Puts project `id` just before `before`, else just after `orAfter`, else last (global project order).
+    private func place(_ id: Int64, before: Int64?, orAfter after: Int64?) throws {
+        let order = try db.projects().map(\.id).filter { $0 != id }
+        let target: Int
+        if let b = before, b != id, let i = order.firstIndex(of: b) { target = i }
+        else if let a = after, let i = order.firstIndex(of: a) { target = i + 1 }
+        else { target = order.count }
+        try db.moveProject(id, to: target)
     }
 
     // MARK: - Columns
 
     func addColumn() {
         guard let p = selected else { return }
+        commitRenames()
         mutate {
-            let at = columns.last?.done == true ? DB.doneIndex(columns)! : columns.count
-            let id = try db.addColumn(p, "Nouvelle colonne", at: at)
+            let id = try db.addColumn(p, "Nouvelle colonne", at: DB.newColumnIndex(columns))
+            columnDraft = "Nouvelle colonne"
             renamingColumn = id
         }
     }
-    func renameColumn(_ id: Int64, _ name: String) {
-        let n = name.trimmingCharacters(in: .whitespaces)
-        renamingColumn = nil
-        guard !n.isEmpty else { return }
-        mutate { try db.renameColumn(id, n) }
-    }
+
     func setColumnColor(_ id: Int64, _ hex: String?) { mutate { try db.setColumnColor(id, hex) } }
     func setColumnDone(_ id: Int64, _ on: Bool) { mutate { try db.setColumnDone(id, on) } }
     func deleteColumn(_ id: Int64) { mutate { try db.deleteColumn(id, force: true) } }
+    /// Column dragged by its header and dropped on another column: it takes that column's place.
+    @discardableResult
+    func dropColumn(_ payload: [String], onto target: Int64) -> Bool {
+        guard let id = payload.lazy.compactMap({ Store.id(from: $0, prefix: Store.columnPrefix) }).first,
+              id != target, columns.contains(where: { $0.id == id }),
+              let to = columns.firstIndex(where: { $0.id == target }) else { return false }
+        mutate { try db.moveColumn(id, to: to) }
+        return true
+    }
+
     func moveColumn(_ id: Int64, by delta: Int) {
         guard let i = columns.firstIndex(where: { $0.id == id }) else { return }
         mutate { try db.moveColumn(id, to: i + delta) }
@@ -288,6 +313,7 @@ final class Store: ObservableObject {
         mutate { try db.addCard(col: col, title: p.title, tags: p.tags, prio: p.prio ?? 0) }
     }
 
+    /// Writes only the fields changed in the editor, so concurrent edits from `kb` aren't overwritten.
     func save(original o: Card, edited e: Card, column: Int64) {
         mutate {
             try db.tx {
@@ -305,12 +331,13 @@ final class Store: ObservableObject {
 
     func setPrio(_ id: Int64, _ p: Int) { mutate { try db.updateCard(id, prio: p) } }
     func delete(_ id: Int64) { mutate { try db.deleteCards([id]) } }
+    func move(_ id: Int64, to col: Int64) { mutate { try db.moveCards([id], to: col) } }
 
-    /// Drop handler: insert dragged cards before `before` (nil = end of column).
+    /// Card drop: insert dragged cards before `target` (nil = end of column).
     @discardableResult
     func drop(_ payload: [String], into col: Int64, before target: Int64?) -> Bool {
         let onBoard = Set(cards.values.flatMap { $0.map(\.id) })
-        let ids = DB.unique(payload.compactMap(Store.cardId)).filter(onBoard.contains)
+        let ids = DB.unique(payload.compactMap { Store.id(from: $0, prefix: Store.cardPrefix) }).filter(onBoard.contains)
         guard !ids.isEmpty else { return false }
         if let t = target, ids.contains(t) { return true }
         let full = cards[col] ?? []
@@ -326,14 +353,23 @@ final class Store: ObservableObject {
         return true
     }
 
-    /// Drag payloads are "kanban-card:<id>" so arbitrary dropped text is ignored.
-    static let dragPrefix = "kanban-card:"
-    static func dragPayload(_ id: Int64) -> String { dragPrefix + String(id) }
-    static func cardId(_ s: String) -> Int64? {
-        s.hasPrefix(dragPrefix) ? Int64(s.dropFirst(dragPrefix.count)) : nil
+    // MARK: - Drag payloads
+    // Typed string payloads ("kanban-card:12", "kanban-project:3") so arbitrary dropped text is ignored.
+
+    static let cardPrefix = "kanban-card:"
+    static let projectPrefix = "kanban-project:"
+    static let columnPrefix = "kanban-column:"
+    static func cardPayload(_ id: Int64) -> String { cardPrefix + String(id) }
+    static func projectPayload(_ id: Int64) -> String { projectPrefix + String(id) }
+    static func columnPayload(_ id: Int64) -> String { columnPrefix + String(id) }
+
+    private static func id(from s: String, prefix: String) -> Int64? {
+        s.hasPrefix(prefix) ? Int64(s.dropFirst(prefix.count)) : nil
     }
 
-    func cardCount(_ col: Int64) -> Int { cards[col]?.count ?? 0 }
-
-    func move(_ id: Int64, to col: Int64) { mutate { try db.moveCards([id], to: col) } }
+    /// Project ids from drag payloads, restricted to existing projects.
+    private func projectIds(_ payload: [String]) -> [Int64] {
+        DB.unique(payload.compactMap { Store.id(from: $0, prefix: Store.projectPrefix) })
+            .filter { id in projects.contains { $0.id == id } }
+    }
 }

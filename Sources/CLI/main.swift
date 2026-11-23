@@ -40,6 +40,9 @@ struct Args {
     var opt: [String: String] = [:]
     var flags: Set<String> = []
     var proj: String?
+    /// For p/g/col: subcommand and its arguments.
+    var sub: String? { pos.first }
+    var rest: [String] { Array(pos.dropFirst()) }
 
     init(_ a: [String], cmd: String) throws {
         let spec = specs[cmd] ?? ([], [], false)
@@ -78,6 +81,9 @@ func intOpt(_ a: Args, _ k: String) throws -> Int? {
     guard let n = Int(v) else { throw KBError("\(k) attend un nombre") }
     return n
 }
+
+/// Position from --top (0) or -at n.
+func atOpt(_ a: Args) throws -> Int? { a.flags.contains("--top") ? 0 : try intOpt(a, "-at") }
 
 /// Literal "\n" typed in a command becomes a real newline.
 func unescape(_ s: String) -> String { s.replacingOccurrences(of: "\\n", with: "\n") }
@@ -158,7 +164,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         for (n, id) in try ids(a.pos).enumerated() {
             let c = try db.requireCard(id)
             let col = try db.column(c.col)
-            let proj = try col.flatMap { try db.project($0.project) }
+            let proj = try db.project(projectOf(db, c))
             if n > 0 { emit("---") }
             emit("\(DB.line(c, star: false)) [\(DB.flat(proj?.name ?? "?"))/\(DB.flat(col?.name ?? "?"))]")
             // Description lines are indented so they can never look like card lines.
@@ -186,7 +192,7 @@ func run(_ db: DB, _ argv: [String]) throws {
     case "mv":
         guard a.pos.count >= 2, let colRef = a.pos.last else { throw KBError("usage: mv id.. col") }
         let list = try ids(Array(a.pos.dropLast()))
-        let at = a.flags.contains("--top") ? 0 : try intOpt(a, "-at")
+        let at = try atOpt(a)
         try db.tx {
             if let pr = a.proj {
                 try db.moveCards(list, to: db.resolveColumn(db.resolveProject(pr).id, colRef).id, at: at)
@@ -209,8 +215,7 @@ func run(_ db: DB, _ argv: [String]) throws {
                               tags: a.opt["-t"].map { applyTagEdit(c.tags, $0) }, prio: try intOpt(a, "-p"))
             if let ref = a.opt["-c"] {
                 let pid = try a.proj.map { try db.resolveProject($0).id } ?? projectOf(db, c)
-                let at = a.flags.contains("--top") ? 0 : try intOpt(a, "-at")
-                try db.moveCards([id], to: db.resolveColumn(pid, ref).id, at: at)
+                try db.moveCards([id], to: db.resolveColumn(pid, ref).id, at: atOpt(a))
             }
         }
 
@@ -223,8 +228,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         try db.setCurrent(db.resolveProject(ref).id)
 
     case "p":
-        let sub = a.pos.first
-        let rest = Array(a.pos.dropFirst())
+        let (sub, rest) = (a.sub, a.rest)
         switch sub {
         case nil:
             // Ungrouped projects first, then one "[Groupe]" header per group.
@@ -249,10 +253,7 @@ func run(_ db: DB, _ argv: [String]) throws {
             try db.renameProject(db.resolveProject(ref).id, rest.joined(separator: " "))
         case "rm":
             guard let ref = a.proj else { throw KBError("usage: p rm @p [-f]") }
-            let p = try db.resolveProject(ref)
-            let n = try db.int("SELECT count(*) FROM cards c JOIN cols k ON k.id=c.col WHERE k.project=?", [p.id])
-            if n > 0 && !a.flags.contains("-f") { throw KBError("projet non vide (\(n) cartes), ajoute -f") }
-            try db.deleteProject(p.id)
+            try db.deleteProject(db.resolveProject(ref).id, force: a.flags.contains("-f"))
         case "mv":
             guard let ref = a.proj, let n = rest.first.flatMap({ Int($0) }) else { throw KBError("usage: p mv @p n") }
             try db.moveProjectInGroup(db.resolveProject(ref).id, to: n)
@@ -260,8 +261,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         }
 
     case "g":
-        let sub = a.pos.first
-        let rest = Array(a.pos.dropFirst())
+        let (sub, rest) = (a.sub, a.rest)
         switch sub {
         case nil:
             let ps = try db.projects()
@@ -280,8 +280,7 @@ func run(_ db: DB, _ argv: [String]) throws {
 
     case "col":
         let p = try project(db, a)
-        let sub = a.pos.first
-        let rest = Array(a.pos.dropFirst())
+        let (sub, rest) = (a.sub, a.rest)
         switch sub {
         case nil:
             let board = try db.board(p.id)
@@ -289,8 +288,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         case "add":
             guard !rest.isEmpty else { throw KBError("usage: col add nom [-at n]") }
             // Default: just before the trailing done column(s); at the end if the last column isn't done.
-            let cs = try db.columns(p.id)
-            let at = try intOpt(a, "-at") ?? (cs.last?.done == true ? DB.doneIndex(cs)! : cs.count)
+            let at = try intOpt(a, "-at") ?? DB.newColumnIndex(db.columns(p.id))
             try db.addColumn(p.id, rest.joined(separator: " "), at: at)
         case "ren":
             guard rest.count >= 2 else { throw KBError("usage: col ren col nom") }
@@ -322,7 +320,7 @@ func run(_ db: DB, _ argv: [String]) throws {
 
 /// Minimal shell-like tokenizer for batch lines (quotes + backslash escapes; "\n" kept for unescape()).
 func tokenize(_ line: String) throws -> [String] {
-    var out: [String] = [], cur = "", has = false, quote: Character?, esc = false
+    var tokens: [String] = [], cur = "", has = false, quote: Character?, esc = false
     for ch in line {
         if esc { cur += ch == "n" ? "\\n" : String(ch); esc = false; has = true; continue }
         if ch == "\\" && quote != "'" { esc = true; continue }
@@ -331,12 +329,12 @@ func tokenize(_ line: String) throws -> [String] {
             continue
         }
         if ch == "'" || ch == "\"" { quote = ch; has = true; continue }
-        if ch.isWhitespace { if has { out.append(cur); cur = ""; has = false }; continue }
+        if ch.isWhitespace { if has { tokens.append(cur); cur = ""; has = false }; continue }
         cur.append(ch); has = true
     }
     if quote != nil { throw KBError("guillemet non fermé") }
-    if has { out.append(cur) }
-    return out
+    if has { tokens.append(cur) }
+    return tokens
 }
 
 // MARK: - Entry

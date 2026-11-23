@@ -42,7 +42,7 @@ final class DB {
         return dir.appendingPathComponent("kanban.sqlite").path
     }
 
-    static let defaultColumns = ["To do", "En cours", "Terminé"]
+    private static let defaultColumns = ["To do", "En cours", "Terminé"]
 
     init(path: String = DB.defaultPath) throws {
         guard sqlite3_open_v2(path, &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
@@ -75,8 +75,7 @@ final class DB {
         CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
         """)
         try tx {
-            // v2: per-column color + done flag. Existing boards: last column of each project becomes "done".
-            // v3: project groups (one level, like Notes folders).
+            // Migration: project groups (one level, like Notes folders).
             if try !hasColumn("projects", "grp") {
                 try exec("""
                 CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, pos INTEGER NOT NULL,
@@ -84,6 +83,7 @@ final class DB {
                 ALTER TABLE projects ADD COLUMN grp INTEGER REFERENCES groups(id) ON DELETE SET NULL;
                 """)
             }
+            // Migration: per-column color + done flag. The last column of each multi-column project becomes "done".
             if try !hasColumn("cols", "done") {
                 try exec("""
                 ALTER TABLE cols ADD COLUMN color TEXT;
@@ -107,7 +107,7 @@ final class DB {
 
     // MARK: - Low level
 
-    func exec(_ sql: String) throws {
+    private func exec(_ sql: String) throws {
         var err: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(h, sql, nil, nil, &err) != SQLITE_OK {
             let m = err.map { String(cString: $0) } ?? "erreur SQL"
@@ -149,7 +149,7 @@ final class DB {
         return v
     }
 
-    var lastId: Int64 { sqlite3_last_insert_rowid(h) }
+    private var lastId: Int64 { sqlite3_last_insert_rowid(h) }
 
     /// Nested-safe transaction (BEGIN IMMEDIATE at top level, savepoints inside).
     @discardableResult
@@ -220,7 +220,7 @@ final class DB {
         return r
     }
 
-    func cards(inColumn col: Int64) throws -> [Card] {
+    private func cards(inColumn col: Int64) throws -> [Card] {
         var r: [Card] = []
         try run("SELECT \(DB.cardCols) FROM cards c WHERE c.col=? ORDER BY c.pos,c.id", [col]) { r.append(DB.cardFrom($0)) }
         return r
@@ -287,10 +287,8 @@ final class DB {
 
     // MARK: - Resolution (names, prefixes, aliases)
 
-    static func norm(_ s: String) -> String {
-        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-            .lowercased().filter { !$0.isWhitespace }
-    }
+    /// Like fold() but without spaces: used to match names and prefixes.
+    static func norm(_ s: String) -> String { fold(s).filter { !$0.isWhitespace } }
 
     func resolveProject(_ ref: String) throws -> Project {
         let ps = try projects()
@@ -339,13 +337,15 @@ final class DB {
         try run("UPDATE projects SET name=? WHERE id=?", [DB.cleanName(name), id])
     }
 
-    func deleteProject(_ id: Int64) throws {
+    func deleteProject(_ id: Int64, force: Bool = false) throws {
         try tx {
             if try int("SELECT count(*) FROM projects") <= 1 { throw KBError("impossible de supprimer le dernier projet") }
+            let n = try int("SELECT count(*) FROM cards c JOIN cols k ON k.id=c.col WHERE k.project=?", [id])
+            if n > 0 && !force { throw KBError("projet non vide (\(n) cartes), ajoute -f") }
             try run("DELETE FROM projects WHERE id=?", [id])
             // Pin the default project to an explicit one instead of following whatever ends up first.
-            if try int("SELECT count(*) FROM meta WHERE k='cur' AND v=?", [String(id)]) > 0 || (try? currentProject()) == nil {
-                if let first = try projects().first { try setCurrent(first.id) }
+            if try int("SELECT count(*) FROM meta WHERE k='cur' AND v=?", [String(id)]) > 0, let first = try projects().first {
+                try setCurrent(first.id)
             }
         }
     }
@@ -355,8 +355,7 @@ final class DB {
             let all = try projects()
             guard let me = all.first(where: { $0.id == id }) else { throw KBError("projet introuvable") }
             let slots = all.enumerated().filter { $0.element.group == me.group }.map { $0.offset }
-            var subset = slots.map { all[$0].id }.filter { $0 != id }
-            subset.insert(id, at: max(0, min(index, subset.count)))
+            let subset = DB.moving(id, in: slots.map { all[$0].id }, to: index)
             var order = all.map(\.id)
             for (slot, pid) in zip(slots, subset) { order[slot] = pid }
             try renumber("projects", order)
@@ -364,20 +363,7 @@ final class DB {
     }
 
     func moveProject(_ id: Int64, to index: Int) throws {
-        try tx {
-            var ids = try projects().map { $0.id }.filter { $0 != id }
-            ids.insert(id, at: max(0, min(index, ids.count)))
-            try renumber("projects", ids)
-        }
-    }
-
-    /// Where "done" lives: leftmost column of the trailing run of done columns; else the last done column; else the last column.
-    static func doneIndex(_ cs: [Column]) -> Int? {
-        guard !cs.isEmpty else { return nil }
-        var i = cs.count
-        while i > 0 && cs[i - 1].done { i -= 1 }
-        if i < cs.count { return i }
-        return cs.lastIndex { $0.done } ?? cs.count - 1
+        try tx { try renumber("projects", DB.moving(id, in: projects().map(\.id), to: index)) }
     }
 
     // MARK: - Groups
@@ -396,8 +382,8 @@ final class DB {
         if r.hasPrefix("[") && r.hasSuffix("]") && r.count >= 2 { r = String(r.dropFirst().dropLast()) }
         let n = DB.norm(r)
         guard !n.isEmpty else { throw KBError("groupe vide") }
-        if let id = Int64(r), let g = gs.first(where: { $0.id == id }), !gs.contains(where: { DB.norm($0.name) == n }) { return g }
         if let g = gs.first(where: { DB.norm($0.name) == n }) { return g }
+        if let id = Int64(r), let g = gs.first(where: { $0.id == id }) { return g }
         let m = gs.filter { DB.norm($0.name).hasPrefix(n) }
         if m.count == 1 { return m[0] }
         throw KBError("groupe \(m.isEmpty ? "inconnu" : "ambigu"): \(ref) (\(gs.map { $0.name }.joined(separator: "|")))")
@@ -461,11 +447,24 @@ final class DB {
             guard try self.project(project) != nil else { throw KBError("projet introuvable") }
             try run("INSERT INTO cols(project,name,pos) VALUES(?,?,?)", [project, name, Int64.max / 2])
             let id = lastId
-            var ids = try columns(project).map { $0.id }.filter { $0 != id }
-            ids.insert(id, at: max(0, min(index ?? ids.count, ids.count)))
-            try renumber("cols", ids)
+            try renumber("cols", DB.moving(id, in: columns(project).map(\.id), to: index))
             return id
         }
+    }
+
+    /// Where "done" lives: leftmost column of the trailing run of done columns; else the last done column; else the last column.
+    static func doneIndex(_ cs: [Column]) -> Int? {
+        guard !cs.isEmpty else { return nil }
+        let i = newColumnIndex(cs)
+        if i < cs.count { return i }
+        return cs.lastIndex { $0.done } ?? cs.count - 1
+    }
+
+    /// Default position for a new column: just before the trailing done column(s), else at the end.
+    static func newColumnIndex(_ cs: [Column]) -> Int {
+        var i = cs.count
+        while i > 0 && cs[i - 1].done { i -= 1 }
+        return i
     }
 
     func setColumnColor(_ id: Int64, _ hex: String?) throws {
@@ -493,9 +492,7 @@ final class DB {
     func moveColumn(_ id: Int64, to index: Int) throws {
         try tx {
             guard let c = try column(id) else { throw KBError("colonne introuvable") }
-            var ids = try columns(c.project).map { $0.id }.filter { $0 != id }
-            ids.insert(id, at: max(0, min(index, ids.count)))
-            try renumber("cols", ids)
+            try renumber("cols", DB.moving(id, in: columns(c.project).map(\.id), to: index))
         }
     }
 
@@ -562,7 +559,17 @@ final class DB {
         for (i, id) in ids.enumerated() { try run("UPDATE \(table) SET pos=? WHERE id=?", [i, id]) }
     }
 
-    static func clampPrio(_ p: Int) -> Int { max(0, min(3, p)) }
+    private static func clampPrio(_ p: Int) -> Int { max(0, min(3, p)) }
+
+    /// `ids` with `id` removed then reinserted at `index` (clamped; nil = end).
+    private static func moving(_ id: Int64, in ids: [Int64], to index: Int?) -> [Int64] {
+        var r = ids.filter { $0 != id }
+        r.insert(id, at: max(0, min(index ?? r.count, r.count)))
+        return r
+    }
+
+    /// Opening → closing quote accepted around multi-word tags: +"…", +«…», +“…”.
+    private static let tagQuotes: [Character: Character] = ["\"": "\"", "«": "»", "“": "”"]
 
     static func unique(_ ids: [Int64]) -> [Int64] {
         var seen = Set<Int64>()
@@ -577,13 +584,13 @@ final class DB {
         }))
     }
 
-    static func cleanName(_ s: String) throws -> String {
+    private static func cleanName(_ s: String) throws -> String {
         let n = flat(s).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !n.isEmpty else { throw KBError("nom vide") }
         return n
     }
 
-    static func cleanTags(_ tags: [String]) -> [String] {
+    private static func cleanTags(_ tags: [String]) -> [String] {
         var seen = Set<String>(), out: [String] = []
         for t in tags {
             let v = flat(t).trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")
@@ -593,7 +600,7 @@ final class DB {
         return out
     }
 
-    static func joinTags(_ t: [String]) -> String { cleanTags(t).joined(separator: ",") }
+    private static func joinTags(_ t: [String]) -> String { cleanTags(t).joined(separator: ",") }
 
     /// "Fix login !2 +bug" -> ("Fix login", ["bug"], 2). Shared by the app's quick-add and `kb add`.
     static func parseInline(_ s: String) -> (title: String, tags: [String], prio: Int?) {
@@ -608,12 +615,12 @@ final class DB {
                 if !cur.isEmpty { tokens.append(cur); cur = "" }
             } else {
                 cur.append(ch)
-                if cur.count == 2, cur.first == "+", let q = ["\"": "\"", "«": "»", "“": "”"][ch] as Character? { closing = q }
+                if cur.count == 2, cur.first == "+", let q = DB.tagQuotes[ch] { closing = q }
             }
         }
         if !cur.isEmpty { tokens.append(cur) }
         for w in tokens {
-            let quoted = w.count > 3 && w.first == "+" && ["\"", "«", "“"].contains(w.dropFirst().first!) && ["\"", "»", "”"].contains(w.last!)
+            let quoted = w.count > 3 && w.first == "+" && DB.tagQuotes[w.dropFirst().first!] == w.last!
             if w.count == 2, w.first == "!", let d = Int(String(w.last!)), (0...3).contains(d) { prio = d }
             else if quoted { tags.append(String(w.dropFirst(2).dropLast()).trimmingCharacters(in: .whitespaces)) }
             else if w.count > 1, w.first == "+", w.dropFirst().first!.isLetter { tags.append(String(w.dropFirst())) }
