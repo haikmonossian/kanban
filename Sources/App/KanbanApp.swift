@@ -165,6 +165,8 @@ struct Sidebar: View {
             }
         }
         .listStyle(.sidebar)
+        // Dropping a project on empty sidebar space takes it out of its group.
+        .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: nil) }
         .confirmationDialog("Supprimer « \(confirmDelete?.name ?? "") » et toutes ses cartes ?",
                             isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
             Button("Supprimer", role: .destructive) { if let p = confirmDelete { store.deleteProject(p.id) } }

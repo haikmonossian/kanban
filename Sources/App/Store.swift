@@ -185,6 +185,19 @@ final class Store: ObservableObject {
             .filter { id in id != target.id && projects.contains { $0.id == id } }
         guard !ids.isEmpty else { return false }
         commitRenames()
+        // Grouped project(s) dropped on an ungrouped one: take them out of their group, placed just before the target.
+        if target.group == nil, ids.allSatisfy({ id in projects.first { $0.id == id }?.group != nil }) {
+            mutate {
+                try db.tx {
+                    for id in ids {
+                        try db.setProjectGroup(id, nil)
+                        let order = try db.projects().map(\.id).filter { $0 != id }
+                        try db.moveProject(id, to: order.firstIndex(of: target.id) ?? order.count)
+                    }
+                }
+            }
+            return true
+        }
         mutate {
             try db.tx {
                 let gid: Int64
