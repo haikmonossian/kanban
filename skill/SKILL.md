@@ -17,10 +17,10 @@ kb p (* = courant, n = cartes ouvertes, [Groupe])   p add nom|ren @p nom|rm @p -
 kb g [add nom|ren g nom|rm g]
 kb col [@p] [add nom|ren c nom|rm c -f|mv c n|done c on|off|save]   kb col tpl [reset] (modèle des nouveaux projets)
 ```
-Texte sans guillemets accepté ; `\n` = retour ligne dans `-d`/`note`. Plusieurs ops = un appel, une par ligne, `@p` permis (erreur : `!L<n> msg`) :
+Texte sans guillemets accepté ; `\n` = retour ligne dans `-d`/`note`. Plusieurs ops = un appel, une par ligne, `@p` permis (erreur : `!L<n> msg`). Ici : ajout, puis cartes 4 et 7 → done :
 ```
 kb - <<'EOF'
 add "X" !2 +client
-mv 4 7 done        # cartes 4 et 7 → done
+mv 4 7 done
 EOF
 ```
