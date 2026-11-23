@@ -103,6 +103,8 @@ final class Store: ObservableObject {
         guard !n.isEmpty else { return }
         mutate { try db.renameColumn(id, n) }
     }
+    func setColumnColor(_ id: Int64, _ hex: String?) { mutate { try db.setColumnColor(id, hex) } }
+    func setColumnDone(_ id: Int64, _ on: Bool) { mutate { try db.setColumnDone(id, on) } }
     func deleteColumn(_ id: Int64) { mutate { try db.deleteColumn(id, force: true) } }
     func moveColumn(_ id: Int64, by delta: Int) {
         guard let i = columns.firstIndex(where: { $0.id == id }) else { return }

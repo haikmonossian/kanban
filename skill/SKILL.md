@@ -4,8 +4,8 @@ description: Kanban perso de l'utilisateur (app Kanban du Dock, projets/cartes/c
 ---
 Toujours passer par `kb` (jamais le fichier SQLite). Une écriture réussie n'affiche rien, sauf `add` → `id` (suivi de `@projet` si le projet était implicite). Ne pas relire après écriture.
 
-Ligne carte : `id titre !prio +tag *` (`*` = a une description). La dernière colonne est repliée dans `kb` (juste son compte) ; `-a` pour tout voir.
-Colonnes : nom, préfixe, ou alias `todo` `doing` `done`. Projet : `@nom` ou préfixe (espaces ignorés) ; par défaut, le projet ouvert dans l'app. Les ids sont globaux : `mv`/`set`/`note`/`rm`/`show` n'ont pas besoin du projet.
+Ligne carte : `id titre !prio +tag *` (`*` = a une description). Les colonnes « terminé » (✓ dans `kb col`) sont repliées dans `kb` (juste leur compte) ; `-a` pour tout voir.
+Colonnes : nom, préfixe, ou alias `todo` `doing` `done` (= colonne terminée). Projet : `@nom` ou préfixe (espaces ignorés) ; par défaut, le projet ouvert dans l'app. Les ids sont globaux : `mv`/`set`/`note`/`rm`/`show` n'ont pas besoin du projet.
 
 ```
 kb [@p] [col..] [-a] [-t tag]      # tableau
@@ -18,7 +18,7 @@ kb note id texte                  # ajoute une ligne à la description, texte li
 kb rm id..
 kb p                              # projets (* = courant, nombre = cartes ouvertes)
 kb p add nom | p ren @p nom | p rm @p -f | p mv @p n
-kb col [@p] [add nom [-at n] | ren col nom | rm col [-f] | mv col n]
+kb col [@p] [add nom [-at n] | ren col nom | rm col [-f] | mv col n | done col [on|off]]
 ```
 `\n` dans `-d` ou `note` = retour à la ligne. Plusieurs opérations → un seul appel (chaque ligne est atomique, une erreur s'affiche `!L<n> message`) :
 ```

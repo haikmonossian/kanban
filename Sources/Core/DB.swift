@@ -9,7 +9,13 @@ struct KBError: Error, CustomStringConvertible {
 }
 
 struct Project: Identifiable, Hashable { var id: Int64; var name: String; var pos: Int64 }
-struct Column: Identifiable, Hashable { var id: Int64; var project: Int64; var name: String; var pos: Int64 }
+struct Column: Identifiable, Hashable {
+    var id: Int64; var project: Int64; var name: String; var pos: Int64
+    /// Hex like "#4D8FF5"; nil = automatic color from position.
+    var color: String? = nil
+    /// "Done" column: cards are struck through and dimmed in the app, collapsed in `kb`, not counted as open.
+    var done: Bool = false
+}
 struct Card: Identifiable, Hashable {
     var id: Int64; var col: Int64; var pos: Int64
     var title: String; var body: String; var tags: [String]; var prio: Int
@@ -67,8 +73,23 @@ final class DB {
         CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
         """)
         try tx {
+            // v2: per-column color + done flag. Existing boards: last column of each project becomes "done".
+            if try !hasColumn("cols", "done") {
+                try exec("""
+                ALTER TABLE cols ADD COLUMN color TEXT;
+                ALTER TABLE cols ADD COLUMN done INTEGER NOT NULL DEFAULT 0;
+                UPDATE cols SET done=1 WHERE id IN (
+                  SELECT (SELECT id FROM cols c2 WHERE c2.project=p.id ORDER BY pos DESC, id DESC LIMIT 1) FROM projects p);
+                """)
+            }
             if try int("SELECT count(*) FROM projects") == 0 { _ = try addProject("Perso") }
         }
+    }
+
+    private func hasColumn(_ table: String, _ col: String) throws -> Bool {
+        var found = false
+        try run("SELECT name FROM pragma_table_info(?)", [table]) { if $0.t(0) == col { found = true } }
+        return found
     }
 
     deinit { sqlite3_close_v2(h) }
@@ -151,18 +172,24 @@ final class DB {
 
     func columns(_ project: Int64) throws -> [Column] {
         var r: [Column] = []
-        try run("SELECT id,project,name,pos FROM cols WHERE project=? ORDER BY pos,id", [project]) {
-            r.append(Column(id: $0.i(0), project: $0.i(1), name: $0.t(2), pos: $0.i(3)))
+        try run("SELECT \(DB.colCols) FROM cols WHERE project=? ORDER BY pos,id", [project]) {
+            r.append(DB.columnFrom($0))
         }
         return r
     }
 
     func column(_ id: Int64) throws -> Column? {
         var c: Column?
-        try run("SELECT id,project,name,pos FROM cols WHERE id=?", [id]) {
-            c = Column(id: $0.i(0), project: $0.i(1), name: $0.t(2), pos: $0.i(3))
+        try run("SELECT \(DB.colCols) FROM cols WHERE id=?", [id]) {
+            c = DB.columnFrom($0)
         }
         return c
+    }
+
+    private static let colCols = "id,project,name,pos,color,done"
+    private static func columnFrom(_ r: Row) -> Column {
+        let hex = r.t(4)
+        return Column(id: r.i(0), project: r.i(1), name: r.t(2), pos: r.i(3), color: hex.isEmpty ? nil : hex, done: r.i(5) != 0)
     }
 
     private static let cardCols = "c.id,c.col,c.pos,c.title,c.body,c.tags,c.prio"
@@ -221,13 +248,12 @@ final class DB {
         return [c.title, c.body, c.tags.joined(separator: " ")].contains { fold($0).contains(foldedNeedle) }
     }
 
-    /// Open (not in last column) card count per project. Single-column projects count everything.
+    /// Open card count per project (cards outside "done" columns).
     func openCounts() throws -> [Int64: Int] {
         var r: [Int64: Int] = [:]
         try run("""
         SELECT k.project, count(c.id) FROM cols k JOIN cards c ON c.col=k.id
-        WHERE (SELECT count(*) FROM cols WHERE project=k.project) = 1
-           OR k.id <> (SELECT id FROM cols WHERE project=k.project ORDER BY pos DESC, id DESC LIMIT 1)
+        WHERE k.done = 0
         GROUP BY k.project
         """) { r[$0.i(0)] = Int($0.i(1)) }
         return r
@@ -272,7 +298,7 @@ final class DB {
         switch n {
         case "todo": if let c = cs.first { return c }
         case "doing", "wip": if cs.count >= 3 { return cs[1] }
-        case "done": if let c = cs.last { return c }
+        case "done": if let c = cs.first(where: { $0.done }) ?? cs.last { return c }
         default: break
         }
         let m = cs.filter { DB.norm($0.name).hasPrefix(n) }
@@ -290,7 +316,7 @@ final class DB {
             try run("INSERT INTO projects(name,pos) VALUES(?,?)", [name, pos])
             let id = lastId
             for (i, c) in DB.defaultColumns.enumerated() {
-                try run("INSERT INTO cols(project,name,pos) VALUES(?,?,?)", [id, c, i])
+                try run("INSERT INTO cols(project,name,pos,done) VALUES(?,?,?,?)", [id, c, i, i == DB.defaultColumns.count - 1 ? 1 : 0])
             }
             return id
         }
@@ -333,6 +359,14 @@ final class DB {
             try renumber("cols", ids)
             return id
         }
+    }
+
+    func setColumnColor(_ id: Int64, _ hex: String?) throws {
+        try run("UPDATE cols SET color=? WHERE id=?", [hex, id])
+    }
+
+    func setColumnDone(_ id: Int64, _ done: Bool) throws {
+        try run("UPDATE cols SET done=? WHERE id=?", [done ? 1 : 0, id])
     }
 
     func renameColumn(_ id: Int64, _ name: String) throws {

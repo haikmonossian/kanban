@@ -3,7 +3,7 @@ import Foundation
 // kb — CLI ultra-compacte pour le kanban (pensée pour Claude : peu de tokens en entrée comme en sortie).
 
 let HELP = """
-kb [@p] [col..] [-a] [-t tag]           tableau (« ls » optionnel ; dernière colonne repliée, -a = tout)
+kb [@p] [col..] [-a] [-t tag]           tableau (« ls » optionnel ; colonnes terminées repliées, -a = tout)
 kb show id..                            détail + description
 kb find texte                           recherche tous projets (casse/accents ignorés)
 kb add titre [!0-3] [+tag] [-c col] [-d desc] [--top] [@p]   -> id (+ @projet si implicite)
@@ -13,7 +13,7 @@ kb note id texte                        ajoute une ligne à la description (tout
 kb rm id..
 kb p [add nom|ren @p nom|rm @p [-f]|mv @p n]   projets (* = courant)
 kb use @p                               projet par défaut
-kb col [@p] [add nom [-at n]|ren col nom|rm col [-f]|mv col n]
+kb col [@p] [add nom [-at n]|ren col nom|rm col [-f]|mv col n|done col [on|off]]   (✓ = terminée)
 kb - <<'EOF'  (une commande par ligne, sans 'kb' ; erreurs : « !L<n> msg »)
 Colonnes : nom, préfixe, ou todo/doing/done. @p : nom ou préfixe (espaces ignorés). \\n = retour à la ligne dans -d/note.
 Ligne carte : id titre !prio +tag *   (* = a une description)
@@ -116,7 +116,7 @@ func ls(_ db: DB, _ a: Args) throws {
             cs = cs.filter { $0.tags.contains { DB.norm($0) == t } }
             if cs.isEmpty { continue }
         }
-        let collapsed = only.isEmpty && !a.flags.contains("-a") && i == cols.count - 1 && cols.count > 1
+        let collapsed = only.isEmpty && !a.flags.contains("-a") && c.done
         emit("#\(c.name) \(cs.count)\(collapsed && !cs.isEmpty ? "…" : "")")
         if !collapsed { cs.forEach { emit(DB.line($0)) } }
     }
@@ -252,7 +252,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         switch sub {
         case nil:
             let board = try db.board(p.id)
-            emit(try db.columns(p.id).map { "\($0.name) \(board[$0.id]?.count ?? 0)" }.joined(separator: " | "))
+            emit(try db.columns(p.id).map { "\($0.name)\($0.done ? "✓" : "") \(board[$0.id]?.count ?? 0)" }.joined(separator: " | "))
         case "add":
             guard !rest.isEmpty else { throw KBError("usage: col add nom [-at n]") }
             // Default: just before the last (done) column so done stays last.
@@ -267,7 +267,18 @@ func run(_ db: DB, _ argv: [String]) throws {
         case "mv":
             guard rest.count == 2, let n = Int(rest[1]) else { throw KBError("usage: col mv col n") }
             try db.moveColumn(db.resolveColumn(p.id, rest[0]).id, to: n)
-        default: throw KBError("sous-commande inconnue: col \(sub!) (add|ren|rm|mv)")
+        case "done":
+            guard rest.count == 1 || rest.count == 2 else { throw KBError("usage: col done col [on|off]") }
+            let c = try db.resolveColumn(p.id, rest[0])
+            let on: Bool
+            switch rest.count == 2 ? rest[1] : nil {
+            case nil: on = !c.done
+            case "on"?: on = true
+            case "off"?: on = false
+            default: throw KBError("usage: col done col [on|off]")
+            }
+            try db.setColumnDone(c.id, on)
+        default: throw KBError("sous-commande inconnue: col \(sub!) (add|ren|rm|mv|done)")
         }
 
     default:

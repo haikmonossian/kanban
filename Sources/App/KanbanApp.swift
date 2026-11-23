@@ -74,6 +74,24 @@ enum Palette {
         }
     }
 
+    /// Choices offered when clicking a column's dot.
+    static let swatches: [(name: String, hex: String)] = [
+        ("Bleu", "#4D8FF5"), ("Ambre", "#F5A32E"), ("Vert", "#40C79E"), ("Violet", "#8C78EB"),
+        ("Rose", "#E66190"), ("Rouge", "#EB5757"), ("Cyan", "#5CB8F2"), ("Gris", "#8E8E93"),
+    ]
+
+    static func hex(_ s: String) -> Color? {
+        var h = s.trimmingCharacters(in: .whitespaces)
+        if h.hasPrefix("#") { h.removeFirst() }
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        return Color(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
+    }
+
+    /// Custom color if set, otherwise automatic from position.
+    static func color(for c: Column, index: Int, total: Int) -> Color {
+        c.color.flatMap(hex) ?? column(index, of: total)
+    }
+
     static func prio(_ p: Int) -> Color {
         switch p { case 3: return .red; case 2: return .orange; default: return .secondary }
     }
@@ -91,7 +109,11 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } detail: {
             BoardScreen()
+                .background(Backdrop())
         }
+        // No opaque header bar: title and search float on the same backdrop as the board,
+        // so the floating glass sidebar sits over one continuous surface (macOS 26 style).
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .alert("Erreur", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }
@@ -167,7 +189,6 @@ struct BoardScreen: View {
 
     var body: some View {
         ZStack {
-            Backdrop()
             VStack(alignment: .leading, spacing: 16) {
                 quickAdd
                 ScrollView(.horizontal) {
@@ -192,12 +213,14 @@ struct BoardScreen: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                 }
                 .scrollIndicators(.automatic)
+                .scrollEdgeEffectStyle(.soft, for: .top)
             }
             .padding(.top, 18)
         }
         .navigationTitle(store.project?.name ?? "Kanban")
         .searchable(text: $search, placement: .toolbar, prompt: "Rechercher")
         .toolbar { ToolbarItem(placement: .primaryAction) { AppearanceButton() } }
+
         .sheet(item: $editing) { CardEditor(card: $0) }
         .onAppear { quickFocus = true }
     }
@@ -274,8 +297,8 @@ struct ColumnView: View {
     @FocusState private var addFocus: Bool
     @FocusState private var renameFocus: Bool
 
-    private var color: Color { Palette.column(index, of: total) }
-    private var isLast: Bool { total > 1 && index == total - 1 }
+    private var color: Color { Palette.color(for: column, index: index, total: total) }
+    @State private var picking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -285,7 +308,7 @@ struct ColumnView: View {
                 GlassEffectContainer(spacing: 8) {
                     LazyVStack(spacing: 8) {
                         ForEach(cards) { c in
-                            CardView(card: c, dimmed: isLast)
+                            CardView(card: c, dimmed: column.done)
                                 .onTapGesture { editing = c }
                                 .draggable(Store.dragPayload(c.id))
                                 .dropDestination(for: String.self) { items, _ in
@@ -331,7 +354,14 @@ struct ColumnView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Circle().fill(color).frame(width: 9, height: 9)
+            Button { picking = true } label: {
+                Circle().fill(color).frame(width: 11, height: 11)
+                    .overlay(Circle().strokeBorder(.primary.opacity(0.15)))
+                    .padding(4).contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Changer la couleur")
+            .popover(isPresented: $picking, arrowEdge: .bottom) { colorPicker }
             if store.renamingColumn == column.id {
                 TextField("Nom", text: $draft)
                     .textFieldStyle(.plain)
@@ -354,6 +384,9 @@ struct ColumnView: View {
             }
             .buttonStyle(.plain).foregroundStyle(.secondary).help("Ajouter une carte")
             Menu {
+                Toggle("Colonne terminée (cartes barrées et estompées)", isOn: Binding(
+                    get: { column.done }, set: { store.setColumnDone(column.id, $0) }))
+                Divider()
                 Button("Renommer") { store.renamingColumn = column.id }
                 Button("Déplacer à gauche") { store.moveColumn(column.id, by: -1) }.disabled(index == 0)
                 Button("Déplacer à droite") { store.moveColumn(column.id, by: 1) }.disabled(index == total - 1)
@@ -366,6 +399,27 @@ struct ColumnView: View {
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 10)
+    }
+
+    private var colorPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 10), count: 4), spacing: 10) {
+                ForEach(Palette.swatches, id: \.hex) { sw in
+                    Button {
+                        store.setColumnColor(column.id, sw.hex); picking = false
+                    } label: {
+                        Circle().fill(Palette.hex(sw.hex)!)
+                            .frame(width: 24, height: 24)
+                            .overlay(Circle().strokeBorder(.primary.opacity(column.color == sw.hex ? 0.9 : 0.12), lineWidth: column.color == sw.hex ? 2 : 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help(sw.name)
+                }
+            }
+            Button("Auto") { store.setColumnColor(column.id, nil); picking = false }
+                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+        .padding(14)
     }
 
     private var addField: some View {
@@ -399,6 +453,7 @@ struct CardView: View {
                 Text(card.title)
                     .font(.system(size: 13, weight: .medium))
                     .strikethrough(dimmed, color: .secondary)
+                    .foregroundStyle(dimmed ? .secondary : .primary)
                     .lineLimit(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("#\(card.id)")
@@ -434,7 +489,8 @@ struct CardView: View {
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 13))
-        .opacity(dimmed ? 0.7 : 1)
+        .opacity(dimmed ? 0.5 : 1)
+        .saturation(dimmed ? 0.2 : 1)
         .contentShape(.rect(cornerRadius: 13))
         .contextMenu {
             Menu("Déplacer vers") {
