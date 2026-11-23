@@ -245,15 +245,18 @@ final class DB {
     }
 
     /// Case- and accent-insensitive search over title, description and tags (all projects).
-    func search(_ q: String) throws -> [(Card, String, String)] {
+    struct Hit { let card: Card; let project: String; let column: String; let done: Bool }
+
+    /// All cards (every project) containing every word of `q`, in board order. Case/accent-insensitive.
+    func search(_ q: String) throws -> [Hit] {
         let needle = DB.fold(q)
-        var r: [(Card, String, String)] = []
+        var r: [Hit] = []
         try run("""
-        SELECT \(DB.cardCols), p.name, k.name FROM cards c JOIN cols k ON k.id=c.col JOIN projects p ON p.id=k.project
+        SELECT \(DB.cardCols), p.name, k.name, k.done FROM cards c JOIN cols k ON k.id=c.col JOIN projects p ON p.id=k.project
         ORDER BY p.pos,p.id,k.pos,k.id,c.pos,c.id
         """) { row in
             let c = DB.cardFrom(row)
-            if DB.matches(c, needle) { r.append((c, row.t(7), row.t(8))) }
+            if DB.matches(c, needle) { r.append(Hit(card: c, project: row.t(7), column: row.t(8), done: row.i(9) != 0)) }
         }
         return r
     }
@@ -263,9 +266,12 @@ final class DB {
         s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).lowercased()
     }
 
+    /// Every word of the (folded) query must appear somewhere in the title, description or tags, in any order.
     static func matches(_ c: Card, _ foldedNeedle: String) -> Bool {
-        guard !foldedNeedle.isEmpty else { return true }
-        return [c.title, c.body, c.tags.joined(separator: " ")].contains { fold($0).contains(foldedNeedle) }
+        let words = foldedNeedle.split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return true }
+        let hay = fold([c.title, c.body, c.tags.joined(separator: " ")].joined(separator: "\n"))
+        return words.allSatisfy { hay.contains($0) }
     }
 
     /// Open card count per project (cards outside "done" columns).

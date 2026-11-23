@@ -3,9 +3,9 @@ import Foundation
 // kb — CLI ultra-compacte pour le kanban (pensée pour Claude : peu de tokens en entrée comme en sortie).
 
 let HELP = """
-kb [@p] [col..] [-a] [-t tag]           tableau (« ls » optionnel ; colonnes terminées repliées, -a = tout)
+kb [@p] [col..] [-a] [-t tag]           tableau (« ls » optionnel ; terminées repliées, 30 cartes/colonne max ; -a = tout)
 kb show id..                            détail + description
-kb find texte                           recherche tous projets (casse/accents ignorés)
+kb find mots [-a] [-n max]              tous projets, tous les mots, hors terminées (-a), 20 max
 kb add titre [!0-3] [+tag|+"deux mots"] [-c col] [-d desc] [--top] [@p]   -> id (+ @projet si implicite)
 kb mv id.. col [--top|-at n] [@p]       n = position, 0 = en haut
 kb set id [-T titre] [-d desc] [-t a,b|+a,-b] [-p 0-3] [-c col [--top|-at n]]
@@ -27,7 +27,7 @@ let specs: [String: (valued: Set<String>, bools: Set<String>, proj: Bool)] = [
     "add": (["-c", "-t", "-p", "-d"], ["--top"], true),
     "mv": (["-at"], ["--top"], true),
     "set": (["-T", "-d", "-t", "-p", "-c", "-at"], ["--top"], true),
-    "show": ([], [], false), "rm": ([], [], false), "find": ([], [], false),
+    "show": ([], [], false), "rm": ([], [], false), "find": (["-n"], ["-a"], false),
     "use": ([], [], true),
     "p": ([], ["-f"], true),
     "g": ([], [], false),
@@ -127,7 +127,11 @@ func ls(_ db: DB, _ a: Args) throws {
         }
         let collapsed = only.isEmpty && !a.flags.contains("-a") && c.done
         emit("#\(DB.flat(c.name)) \(cs.count)\(collapsed && !cs.isEmpty ? "…" : "")")
-        if !collapsed { cs.forEach { emit(DB.line($0)) } }
+        if collapsed { continue }
+        // Overview (no column named, no -a) shows at most 30 cards per column; naming the column shows all.
+        let cap = only.isEmpty && !a.flags.contains("-a") ? 30 : Int.max
+        cs.prefix(cap).forEach { emit(DB.line($0)) }
+        if cs.count > cap { emit("… +\(cs.count - cap) (kb \(DB.norm(c.name)))") }
     }
 }
 
@@ -174,8 +178,15 @@ func run(_ db: DB, _ argv: [String]) throws {
 
     case "find":
         let q = a.pos.joined(separator: " ")
-        guard !q.isEmpty else { throw KBError("usage: find texte") }
-        for (c, p, k) in try db.search(q) { emit("\(DB.line(c)) [\(DB.flat(p))/\(DB.flat(k))]") }
+        guard !q.isEmpty else { throw KBError("usage: find mots [-a] [-n max]") }
+        // Bounded output whatever the history size: done cards skipped unless -a, at most -n (20) lines.
+        let all = try db.search(q)
+        let shown = a.flags.contains("-a") ? all : all.filter { !$0.done }
+        let limit = max(1, try intOpt(a, "-n") ?? 20)
+        for h in shown.prefix(limit) { emit("\(DB.line(h.card)) [\(DB.flat(h.project))/\(DB.flat(h.column))]") }
+        if shown.count > limit { emit("… +\(shown.count - limit) (préciser les mots ou -n)") }
+        let hiddenDone = all.count - shown.count
+        if hiddenDone > 0 { emit("(+\(hiddenDone) terminées : -a)") }
 
     case "add":
         // The shell (and batch mode) strip the quotes of +"deux mots": an argument starting with "+"
