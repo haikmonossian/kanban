@@ -66,7 +66,7 @@ struct BoardScreen: View {
             Image(systemName: "plus.circle.fill")
                 .font(.system(size: 18))
                 .foregroundStyle(Palette.blue)
-            TextField("Ajouter une tâche…   !2 priorité · +étiquettes à la fin", text: $quick, axis: .vertical)
+            TextField("Ajouter une tâche…      priorité : !2   ·   étiquette : +nom", text: $quick, axis: .vertical)
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
