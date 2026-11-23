@@ -110,8 +110,8 @@ func ls(_ db: DB, _ a: Args) throws {
     let board = try db.board(p.id)
     let only = try Set(a.pos.map { try db.resolveColumn(p.id, $0).id })
     let tag = a.opt["-t"].map(DB.norm)
-    if try db.projects().count > 1 { emit("@\(p.name)") }
-    for (i, c) in cols.enumerated() {
+    if try db.projects().count > 1 { emit("@\(DB.flat(p.name))") }
+    for c in cols {
         if !only.isEmpty && !only.contains(c.id) { continue }
         var cs = board[c.id] ?? []
         if let t = tag {
@@ -119,7 +119,7 @@ func ls(_ db: DB, _ a: Args) throws {
             if cs.isEmpty { continue }
         }
         let collapsed = only.isEmpty && !a.flags.contains("-a") && c.done
-        emit("#\(c.name) \(cs.count)\(collapsed && !cs.isEmpty ? "…" : "")")
+        emit("#\(DB.flat(c.name)) \(cs.count)\(collapsed && !cs.isEmpty ? "…" : "")")
         if !collapsed { cs.forEach { emit(DB.line($0)) } }
     }
 }
@@ -160,14 +160,15 @@ func run(_ db: DB, _ argv: [String]) throws {
             let col = try db.column(c.col)
             let proj = try col.flatMap { try db.project($0.project) }
             if n > 0 { emit("---") }
-            emit("\(DB.line(c, star: false)) [\(proj?.name ?? "?")/\(col?.name ?? "?")]")
-            if !c.body.isEmpty { emit(c.body) }
+            emit("\(DB.line(c, star: false)) [\(DB.flat(proj?.name ?? "?"))/\(DB.flat(col?.name ?? "?"))]")
+            // Description lines are indented so they can never look like card lines.
+            if !c.body.isEmpty { c.body.components(separatedBy: .newlines).forEach { emit("  " + DB.flat($0)) } }
         }
 
     case "find":
         let q = a.pos.joined(separator: " ")
         guard !q.isEmpty else { throw KBError("usage: find texte") }
-        for (c, p, k) in try db.search(q) { emit("\(DB.line(c)) [\(p)/\(k)]") }
+        for (c, p, k) in try db.search(q) { emit("\(DB.line(c)) [\(DB.flat(p))/\(DB.flat(k))]") }
 
     case "add":
         let parsed = DB.parseInline(a.pos.joined(separator: " "))
@@ -180,7 +181,7 @@ func run(_ db: DB, _ argv: [String]) throws {
                                 top: a.flags.contains("--top"))
         // Say where it went when the project was implicit and could be ambiguous.
         let many = try db.projects().count > 1
-        emit(a.proj == nil && many ? "\(id) @\(p.name)" : String(id))
+        emit(a.proj == nil && many ? "\(id) @\(DB.flat(p.name))" : String(id))
 
     case "mv":
         guard a.pos.count >= 2, let colRef = a.pos.last else { throw KBError("usage: mv id.. col") }
@@ -230,10 +231,10 @@ func run(_ db: DB, _ argv: [String]) throws {
             let cur = try db.currentProject().id
             let counts = try db.openCounts()
             let ps = try db.projects()
-            let line = { (p: Project) in "@\(p.name)\(p.id == cur ? "*" : "") \(counts[p.id] ?? 0)" }
+            let line = { (p: Project) in "@\(DB.flat(p.name))\(p.id == cur ? "*" : "") \(counts[p.id] ?? 0)" }
             ps.filter { $0.group == nil }.forEach { emit(line($0)) }
             for g in try db.groups() {
-                emit("[\(g.name)]")
+                emit("[\(DB.flat(g.name))]")
                 ps.filter { $0.group == g.id }.forEach { emit(line($0)) }
             }
         case "grp":
@@ -264,7 +265,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         switch sub {
         case nil:
             let ps = try db.projects()
-            for g in try db.groups() { emit("[\(g.name)] \(ps.filter { $0.group == g.id }.count)") }
+            for g in try db.groups() { emit("[\(DB.flat(g.name))] \(ps.filter { $0.group == g.id }.count)") }
         case "add":
             guard !rest.isEmpty else { throw KBError("usage: g add nom") }
             try db.addGroup(rest.joined(separator: " "))
@@ -284,7 +285,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         switch sub {
         case nil:
             let board = try db.board(p.id)
-            emit(try db.columns(p.id).map { "\($0.name)\($0.done ? "✓" : "") \(board[$0.id]?.count ?? 0)" }.joined(separator: " | "))
+            emit(try db.columns(p.id).map { "\(DB.flat($0.name))\($0.done ? "✓" : "") \(board[$0.id]?.count ?? 0)" }.joined(separator: " | "))
         case "add":
             guard !rest.isEmpty else { throw KBError("usage: col add nom [-at n]") }
             // Default: just before the trailing done column(s); at the end if the last column isn't done.
@@ -355,7 +356,7 @@ do {
                 if tokens.first == "kb" { tokens.removeFirst() }
                 try db.tx { try run(db, tokens) }
             } catch {
-                emit("!L\(n + 1) \(error)")
+                emit("!L\(n + 1) \(DB.flat("\(error)"))")
                 code = 1
             }
         }

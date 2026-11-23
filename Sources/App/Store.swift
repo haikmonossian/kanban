@@ -30,10 +30,37 @@ final class Store: ObservableObject {
     private var reloading = false
 
     init() {
-        do { db = try DB() } catch { fatalError("Base inaccessible : \(error)") }
+        db = Store.openDatabase()
         reloadAll()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
+        }
+    }
+
+    /// Opens the DB; on failure offers to move the broken file aside instead of crashing at every launch.
+    private static func openDatabase() -> DB {
+        while true {
+            do { return try DB() } catch {
+                let path = DB.defaultPath
+                let alert = NSAlert()
+                alert.alertStyle = .critical
+                alert.messageText = "Impossible d'ouvrir la base Kanban"
+                alert.informativeText = "\(error)\n\n\(path)"
+                alert.addButton(withTitle: "Réessayer")
+                alert.addButton(withTitle: "Mettre de côté et repartir à zéro")
+                alert.addButton(withTitle: "Quitter")
+                switch alert.runModal() {
+                case .alertSecondButtonReturn:
+                    let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+                    for ext in ["", "-wal", "-shm"] where FileManager.default.fileExists(atPath: path + ext) {
+                        try? FileManager.default.moveItem(atPath: path + ext, toPath: path + ".corrompu-\(stamp)" + ext)
+                    }
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path).deletingLastPathComponent()])
+                case .alertThirdButtonReturn:
+                    exit(1)
+                default: break
+                }
+            }
         }
     }
 

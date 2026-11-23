@@ -1,19 +1,34 @@
 #!/bin/bash
-# Build Kanban.app (+ kb CLI inside the bundle).  ./build.sh install  → also installs to /Applications,
-# links ~/.local/bin/kb and the Claude skill.
+# ./build.sh            → build/Kanban.app (machine courante)
+# ./build.sh install    → + /Applications/Kanban.app, ~/.local/bin/kb, skill Claude
+# ./build.sh release    → app universelle (Apple Silicon + Intel) + build/Kanban-<version>.dmg + .sha256
 set -euo pipefail
 cd "$(dirname "$0")"
 
+MODE="${1:-}"
 APP=build/Kanban.app
-FLAGS=(-O -swift-version 5 -target arm64-apple-macos26.0)
+VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
+ARCHS=(arm64)
+[ "$MODE" = "release" ] && ARCHS=(arm64 x86_64)
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build/obj
 
-echo "→ app"
-swiftc "${FLAGS[@]}" -parse-as-library Sources/Core/*.swift Sources/App/*.swift -lsqlite3 -o "$APP/Contents/MacOS/Kanban"
+# compile <out> <extra flags...> -- <sources...> : one slice per arch, merged with lipo
+compile() {
+  local out=$1; shift
+  local slices=()
+  for a in "${ARCHS[@]}"; do
+    swiftc -O -swift-version 5 -target "$a-apple-macos26.0" "$@" -lsqlite3 -o "build/obj/$(basename "$out")-$a"
+    slices+=("build/obj/$(basename "$out")-$a")
+  done
+  lipo -create "${slices[@]}" -output "$out"
+}
+
+echo "→ app (${ARCHS[*]})"
+compile "$APP/Contents/MacOS/Kanban" -parse-as-library Sources/Core/*.swift Sources/App/*.swift
 echo "→ kb"
-swiftc "${FLAGS[@]}" Sources/Core/*.swift Sources/CLI/main.swift -lsqlite3 -o "$APP/Contents/MacOS/kb"
+compile "$APP/Contents/MacOS/kb" Sources/Core/*.swift Sources/CLI/main.swift
 
 echo "→ icône"
 if [ ! -f build/AppIcon.icns ] || [ Scripts/icon.swift -nt build/AppIcon.icns ]; then
@@ -26,11 +41,15 @@ if [ ! -f build/AppIcon.icns ] || [ Scripts/icon.swift -nt build/AppIcon.icns ];
   iconutil -c icns build/AppIcon.iconset -o build/AppIcon.icns
 fi
 cp build/AppIcon.icns "$APP/Contents/Resources/"
+cp skill/SKILL.md "$APP/Contents/Resources/SKILL.md"
 cp Resources/Info.plist "$APP/Contents/"
-codesign --force --deep -s - "$APP" >/dev/null 2>&1
+# Ad-hoc signature (no Apple Developer ID): required to run on Apple Silicon, not notarized.
+# Inner binary first, then the bundle (no --deep), hardened runtime on both.
+codesign --force --options runtime -s - "$APP/Contents/MacOS/kb"
+codesign --force --options runtime -s - "$APP"
 echo "✓ $APP"
 
-if [ "${1:-}" = "install" ]; then
+if [ "$MODE" = "install" ]; then
   DEST=/Applications/Kanban.app
   pkill -x Kanban 2>/dev/null && sleep 0.5 || true
   rm -rf "$DEST" && cp -R "$APP" "$DEST"
@@ -38,4 +57,14 @@ if [ "${1:-}" = "install" ]; then
   mkdir -p "$HOME/.claude/skills/kanban" && cp skill/SKILL.md "$HOME/.claude/skills/kanban/SKILL.md"
   touch "$DEST"
   echo "✓ installé : $DEST, ~/.local/bin/kb, ~/.claude/skills/kanban"
+fi
+
+if [ "$MODE" = "release" ]; then
+  DMG="build/Kanban-$VERSION.dmg"
+  STAGE=build/dmg && rm -rf "$STAGE" "$DMG" && mkdir -p "$STAGE"
+  cp -R "$APP" "$STAGE/" && ln -s /Applications "$STAGE/Applications"
+  hdiutil create -quiet -volname "Kanban $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO "$DMG"
+  (cd build && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+  echo "✓ $DMG ($(du -h "$DMG" | cut -f1))"
+  lipo -archs "$APP/Contents/MacOS/Kanban"
 fi

@@ -569,8 +569,16 @@ final class DB {
         return ids.filter { seen.insert($0).inserted }
     }
 
+    /// One line, no control characters (newlines, CR, ESC, U+2028…) so stored text can't forge `kb` output lines
+    /// or inject terminal escapes.
+    static func flat(_ s: String) -> String {
+        String(String.UnicodeScalarView(s.unicodeScalars.map { u in
+            CharacterSet.controlCharacters.contains(u) || CharacterSet.newlines.contains(u) ? " " : u
+        }))
+    }
+
     static func cleanName(_ s: String) throws -> String {
-        let n = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        let n = flat(s).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !n.isEmpty else { throw KBError("nom vide") }
         return n
     }
@@ -578,7 +586,7 @@ final class DB {
     static func cleanTags(_ tags: [String]) -> [String] {
         var seen = Set<String>(), out: [String] = []
         for t in tags {
-            let v = t.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")
+            let v = flat(t).trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "+#"))
             if !v.isEmpty, seen.insert(v.lowercased()).inserted { out.append(v) }
         }
@@ -601,9 +609,9 @@ final class DB {
 
     /// Compact one-line representation, mirrors the inline syntax.
     static func line(_ c: Card, star: Bool = true) -> String {
-        var s = "\(c.id) \(c.title.replacingOccurrences(of: "\n", with: " "))"
+        var s = "\(c.id) \(flat(c.title))"
         if c.prio > 0 { s += " !\(c.prio)" }
-        for t in c.tags { s += " +\(t)" }
+        for t in c.tags { s += " +\(flat(t))" }
         if star && !c.body.isEmpty { s += " *" }
         return s
     }

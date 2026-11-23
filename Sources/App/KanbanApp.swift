@@ -17,6 +17,9 @@ struct KanbanApp: App {
         .defaultSize(width: 1240, height: 780)
         .commands {
             SidebarCommands()
+            CommandGroup(after: .appInfo) {
+                Button("Installer kb pour Claude…") { ClaudeSetup.install() }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Nouveau projet") { store.newProject() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
