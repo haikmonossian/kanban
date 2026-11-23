@@ -5,11 +5,12 @@ import UniformTypeIdentifiers
 struct Sidebar: View {
     @EnvironmentObject var store: Store
     @State private var confirmDelete: Project?
-    @State private var hoveredGroup: Int64?
-    /// How much the native section chevron (shown on hover) narrows the header, measured on first hover.
-    @AppStorage("groupChevronShrink") private var chevronShrink: Double = 0
-    @State private var headerWidth: [Int64: CGFloat] = [:]
-    private static let chevronRoom: CGFloat = 18
+    /// Header widths, used to keep a group's count still when macOS shows its chevron:
+    /// "Projets" (never has a chevron) is the reference, a group header narrows while its chevron is shown.
+    @State private var referenceWidth: CGFloat = 0
+    @State private var groupWidth: [Int64: CGFloat] = [:]
+    /// Space kept for the chevron on the right of the count; grows to the widest chevron ever measured.
+    @AppStorage("groupChevronRoom") private var chevronRoom: Double = 18
 
     var body: some View {
         List(selection: $store.selected) {
@@ -59,12 +60,22 @@ struct Sidebar: View {
             .help("Nouveau projet ou groupe")
         }
         .contentShape(Rectangle())
+        .background(widthReader { referenceWidth = $0 })
         .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: nil) }
     }
 
+    private func widthReader(_ update: @escaping (CGFloat) -> Void) -> some View {
+        GeometryReader { geo in Color.clear.onChange(of: geo.size.width, initial: true) { _, w in update(w) } }
+    }
+
+    /// How much narrower this group's header currently is than "Projets" (= the chevron macOS is showing).
+    private func chevronShrink(_ g: ProjectGroup) -> CGFloat {
+        guard referenceWidth > 0, let w = groupWidth[g.id] else { return 0 }
+        return max(referenceWidth - w, 0)
+    }
+
     private func groupHeader(_ g: ProjectGroup) -> some View {
-        let hovered = hoveredGroup == g.id
-        return HStack(spacing: 6) {
+        HStack(spacing: 6) {
             Image(systemName: "folder").font(.system(size: 11))
             if store.renamingGroup == g.id {
                 RenameField(text: $store.groupDraft,
@@ -76,19 +87,18 @@ struct Sidebar: View {
             Spacer(minLength: 4)
             let n = store.openCount(group: g.id)
             if n > 0 {
-                // Room is kept on the right for the system chevron; when it appears on hover the header
-                // narrows by `chevronShrink`, so the padding shrinks by the same amount and the count stays put.
+                // Room is kept on the right for the system chevron; while it is shown the header narrows,
+                // the padding shrinks by exactly that much, so the count never moves (whatever the pointer does).
                 Text("\(n)").monospacedDigit().foregroundStyle(.secondary)
-                    .padding(.trailing, max(Self.chevronRoom - (hovered ? chevronShrink : 0), 0))
+                    .padding(.trailing, max(chevronRoom - chevronShrink(g), 0) + 6)
             }
         }
-        .background(GeometryReader { geo in
-            Color.clear.onChange(of: geo.size.width, initial: true) { _, w in measure(g.id, width: w) }
+        .background(widthReader { w in
+            groupWidth[g.id] = w
+            let shrink = Double(chevronShrink(g))
+            if shrink > chevronRoom && shrink < 60 { chevronRoom = shrink }
         })
         .contentShape(Rectangle())
-        .onHover { inside in
-            if inside { hoveredGroup = g.id } else if hoveredGroup == g.id { hoveredGroup = nil }
-        }
         .onTapGesture { if store.renamingGroup != g.id { setExpanded(g, g.collapsed) } }
         // A click on the header only toggles the group: no selection / focus highlight.
         .selectionDisabled()
@@ -99,18 +109,6 @@ struct Sidebar: View {
             Button("Renommer") { store.startRename(g) }
             Divider()
             Button("Supprimer le groupe (garde les projets)", role: .destructive) { store.deleteGroup(g.id) }
-        }
-    }
-
-    /// Learns how much the header narrows while hovered (system chevron appearing).
-    private func measure(_ id: Int64, width w: CGFloat) {
-        if hoveredGroup == id {
-            if let base = headerWidth[id] {
-                let shrink = base - w
-                if shrink >= 0 && shrink < 60 { chevronShrink = Double(shrink) }
-            }
-        } else {
-            headerWidth[id] = w
         }
     }
 
