@@ -14,8 +14,7 @@ kb rm id..
 kb p [add nom|ren @p nom|rm @p [-f]|mv @p n|grp @p groupe|-]   projets par groupe (* = courant ; mv n = position dans son groupe)
 kb g [add nom|ren groupe nom|rm groupe]  groupes de projets (rm = projets dégroupés)
 kb use @p                               projet par défaut
-kb sort [prio|ajout]                    ordre des cartes (partagé avec l'app)
-kb col [@p] [add nom [-at n]|ren col nom|rm col [-f]|mv col n|done col [on|off]]   (✓ = terminée)
+kb col [@p] [add nom [-at n]|ren col nom|rm col [-f]|mv col n|done col [on|off]|sort col [on|off]]   (✓ terminée, ↓ triée par priorité)
 kb col [@p] save | kb col tpl [reset]   modèle de colonnes des nouveaux projets
 kb - <<'EOF'  (une commande par ligne, sans 'kb' ; erreurs : « !L<n> msg »)
 Colonnes : nom, préfixe, ou todo/doing/done. @p : nom ou préfixe (espaces ignorés). \\n = retour à la ligne dans -d/note.
@@ -30,7 +29,6 @@ let specs: [String: (valued: Set<String>, bools: Set<String>, proj: Bool)] = [
     "set": (["-T", "-d", "-t", "-p", "-c", "-at"], ["--top"], true),
     "show": ([], [], false), "rm": ([], [], false), "find": (["-n"], ["-a"], false),
     "use": ([], [], true),
-    "sort": ([], [], false),
     "p": ([], ["-f"], true),
     "g": ([], [], false),
     "col": (["-at"], ["-f"], true),
@@ -83,6 +81,16 @@ func intOpt(_ a: Args, _ k: String) throws -> Int? {
     guard let v = a.opt[k] else { return nil }
     guard let n = Int(v) else { throw KBError("\(k) attend un nombre") }
     return n
+}
+
+/// "on" / "off" as 2nd argument, or toggle `current` when absent.
+func onOff(_ rest: [String], current: Bool) throws -> Bool {
+    switch rest.count == 2 ? rest[1] : nil {
+    case nil: return !current
+    case "on"?: return true
+    case "off"?: return false
+    default: throw KBError("attendu : on ou off")
+    }
 }
 
 /// Position from --top (0) or -at n.
@@ -237,14 +245,6 @@ func run(_ db: DB, _ argv: [String]) throws {
         guard !a.pos.isEmpty else { throw KBError("usage: rm id..") }
         try db.deleteCards(ids(a.pos))
 
-    case "sort":
-        switch a.pos.first.map(DB.norm) {
-        case nil: emit(try db.sortByPriority() ? "prio" : "ajout")
-        case "prio"?, "priorite"?: try db.setSortByPriority(true)
-        case "ajout"?: try db.setSortByPriority(false)
-        default: throw KBError("usage: sort [prio|ajout]")
-        }
-
     case "use":
         guard let ref = a.proj ?? a.pos.first else { throw KBError("usage: use @p") }
         try db.setCurrent(db.resolveProject(ref).id)
@@ -306,7 +306,7 @@ func run(_ db: DB, _ argv: [String]) throws {
         switch sub {
         case nil:
             let board = try db.board(p.id)
-            emit(try db.columns(p.id).map { "\(DB.flat($0.name))\($0.done ? "✓" : "") \(board[$0.id]?.count ?? 0)" }.joined(separator: " | "))
+            emit(try db.columns(p.id).map { "\(DB.flat($0.name))\($0.done ? "✓" : "")\($0.sortByPriority ? "↓" : "") \(board[$0.id]?.count ?? 0)" }.joined(separator: " | "))
         case "add":
             guard !rest.isEmpty else { throw KBError("usage: col add nom [-at n]") }
             // Default: just before the trailing done column(s); at the end if the last column isn't done.
@@ -326,18 +326,15 @@ func run(_ db: DB, _ argv: [String]) throws {
         case "tpl":
             if rest.first == "reset" { try db.resetColumnTemplate(); break }
             emit(try db.columnTemplate().map { "\(DB.flat($0.name))\($0.done ? "✓" : "")" }.joined(separator: " | "))
+        case "sort":
+            guard rest.count == 1 || rest.count == 2 else { throw KBError("usage: col sort col [on|off]") }
+            let c = try db.resolveColumn(p.id, rest[0])
+            try db.setColumnSort(c.id, byPriority: try onOff(rest, current: c.sortByPriority))
         case "done":
             guard rest.count == 1 || rest.count == 2 else { throw KBError("usage: col done col [on|off]") }
             let c = try db.resolveColumn(p.id, rest[0])
-            let on: Bool
-            switch rest.count == 2 ? rest[1] : nil {
-            case nil: on = !c.done
-            case "on"?: on = true
-            case "off"?: on = false
-            default: throw KBError("usage: col done col [on|off]")
-            }
-            try db.setColumnDone(c.id, on)
-        default: throw KBError("sous-commande inconnue: col \(sub!) (add|ren|rm|mv|done|save|tpl)")
+            try db.setColumnDone(c.id, try onOff(rest, current: c.done))
+        default: throw KBError("sous-commande inconnue: col \(sub!) (add|ren|rm|mv|done|sort|save|tpl)")
         }
 
     default:

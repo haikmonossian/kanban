@@ -17,8 +17,6 @@ final class Store: ObservableObject {
         }
     }
     @Published var error: String?
-    /// Cards sorted by priority instead of added/manual order (shared with `kb`).
-    @Published private(set) var sortByPriority = false
     /// Short confirmation shown to the user (e.g. template saved).
     @Published var info: String?
 
@@ -107,7 +105,6 @@ final class Store: ObservableObject {
             set(\.projects, try db.projects())
             set(\.groups, try db.groups())
             set(\.counts, try db.openCounts())
-            set(\.sortByPriority, try db.sortByPriority())
             if selected == nil || !projects.contains(where: { $0.id == selected }) {
                 selected = (try? db.currentProject().id) ?? projects.first?.id
             }
@@ -320,6 +317,7 @@ final class Store: ObservableObject {
     }
 
     func setColumnColor(_ id: Int64, _ hex: String?) { mutate { try db.setColumnColor(id, hex) } }
+    func setColumnSort(_ id: Int64, byPriority on: Bool) { mutate { try db.setColumnSort(id, byPriority: on) } }
     func setColumnDone(_ id: Int64, _ on: Bool) { mutate { try db.setColumnDone(id, on) } }
     func deleteColumn(_ id: Int64) { mutate { try db.deleteColumn(id, force: true) } }
     func moveColumn(_ id: Int64, to index: Int) { mutate { try db.moveColumn(id, to: index) } }
@@ -355,7 +353,6 @@ final class Store: ObservableObject {
         }
     }
 
-    func setSortByPriority(_ on: Bool) { mutate { try db.setSortByPriority(on) } }
 
     func setPrio(_ id: Int64, _ p: Int) { mutate { try db.updateCard(id, prio: p) } }
     func delete(_ id: Int64) { mutate { try db.deleteCards([id]) } }

@@ -14,8 +14,8 @@ kb mv id.. col [--top|-at n]      (n = position, 0 = haut)
 kb set id [-T titre] [-d desc] [-t a,b|+a,-b] [-p 0-3] [-c col]
 kb note id texte (ajoute à la description)      kb rm id..
 kb p (* = courant, n = cartes ouvertes, [Groupe])   p add nom|ren @p nom|rm @p -f|mv @p n|grp @p groupe|-
-kb g [add nom|ren g nom|rm g]     kb sort [prio|ajout] (ordre des cartes, partagé avec l'app)
-kb col [@p] [add nom|ren c nom|rm c -f|mv c n|done c on|off|save]   kb col tpl [reset] (modèle des nouveaux projets)
+kb g [add nom|ren g nom|rm g]
+kb col [@p] [add nom|ren c nom|rm c -f|mv c n|done c on|off|sort c on|off|save]   kb col tpl [reset] (modèle des nouveaux projets)
 ```
 Texte sans guillemets accepté ; `\n` = retour ligne dans `-d`/`note`. Plusieurs ops = un appel, une par ligne, `@p` permis (erreur : `!L<n> msg`). Ici : ajout, puis cartes 4 et 7 → done :
 ```

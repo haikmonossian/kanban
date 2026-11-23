@@ -56,17 +56,7 @@ struct BoardScreen: View {
         .padding(.top, 18)
         .navigationTitle(store.project?.name ?? "Kanban")
         .searchable(text: $search, placement: .toolbar, prompt: "Rechercher")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Picker("Tri", selection: Binding(get: { store.sortByPriority }, set: { store.setSortByPriority($0) })) {
-                    Text("Ajout").tag(false)
-                    Text("Priorité").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .help("Ordre des cartes : d'ajout (réordonnables à la main) ou par priorité")
-            }
-            ToolbarItem(placement: .primaryAction) { AppearanceButton() }
-        }
+        .toolbar { ToolbarItem(placement: .primaryAction) { AppearanceButton() } }
         .sheet(item: $editing) { CardEditor(card: $0) }
         .onAppear { quickFocus = true }
     }
@@ -233,6 +223,14 @@ struct ColumnView: View {
             .font(.system(size: 13, weight: .semibold))
 
             Text("\(cards.count)").font(.system(size: 12)).foregroundStyle(.secondary)
+            if column.sortByPriority {
+                // Visible reminder that this column is sorted; click to go back to added order.
+                Button { store.setColumnSort(column.id, byPriority: false) } label: {
+                    Image(systemName: "arrow.down.square").font(.system(size: 11))
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Triée par priorité — cliquer pour revenir à l'ordre d'ajout")
+            }
             Spacer()
             Button { adding = true; DispatchQueue.main.async { addFocus = true } } label: {
                 Image(systemName: "plus")
@@ -266,6 +264,8 @@ struct ColumnView: View {
 
     private var menu: some View {
         Menu {
+            Toggle("Trier par priorité", isOn: Binding(
+                get: { column.sortByPriority }, set: { store.setColumnSort(column.id, byPriority: $0) }))
             Toggle("Colonne terminée (cartes barrées et estompées)", isOn: Binding(
                 get: { column.done }, set: { store.setColumnDone(column.id, $0) }))
             Divider()

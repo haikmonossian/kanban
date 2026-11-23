@@ -16,6 +16,8 @@ struct Column: Identifiable, Hashable {
     var color: String? = nil
     /// "Done" column: cards are struck through and dimmed in the app, collapsed in `kb`, not counted as open.
     var done: Bool = false
+    /// Cards ordered by priority (3 → none) instead of added/manual order.
+    var sortByPriority: Bool = false
 }
 struct Card: Identifiable, Hashable {
     var id: Int64; var col: Int64; var pos: Int64
@@ -43,7 +45,10 @@ final class DB {
     }
 
     /// One column of the template used for new projects.
-    struct ColumnTemplate: Codable, Equatable { var name: String; var color: String?; var done: Bool }
+    struct ColumnTemplate: Codable, Equatable {
+        var name: String; var color: String?; var done: Bool
+        var sort: Bool? = nil   // optional: templates saved before per-column sort decode fine
+    }
 
     static let defaultTemplate = [
         ColumnTemplate(name: "To do", color: nil, done: false),
@@ -89,6 +94,12 @@ final class DB {
                     collapsed INTEGER NOT NULL DEFAULT 0);
                 ALTER TABLE projects ADD COLUMN grp INTEGER REFERENCES groups(id) ON DELETE SET NULL;
                 """)
+            }
+            // Migration: per-column priority sort (replaces the former global "sort" setting).
+            if try !hasColumn("cols", "sort_prio") {
+                try exec("ALTER TABLE cols ADD COLUMN sort_prio INTEGER NOT NULL DEFAULT 0;")
+                if try int("SELECT count(*) FROM meta WHERE k='sort' AND v='prio'") > 0 { try exec("UPDATE cols SET sort_prio=1;") }
+                try exec("DELETE FROM meta WHERE k='sort';")
             }
             // Migration: per-column color + done flag. The last column of each multi-column project becomes "done".
             if try !hasColumn("cols", "done") {
@@ -206,10 +217,11 @@ final class DB {
         return c
     }
 
-    private static let colCols = "id,project,name,pos,color,done"
+    private static let colCols = "id,project,name,pos,color,done,sort_prio"
     private static func columnFrom(_ r: Row) -> Column {
         let hex = r.t(4)
-        return Column(id: r.i(0), project: r.i(1), name: r.t(2), pos: r.i(3), color: hex.isEmpty ? nil : hex, done: r.i(5) != 0)
+        return Column(id: r.i(0), project: r.i(1), name: r.t(2), pos: r.i(3), color: hex.isEmpty ? nil : hex,
+                      done: r.i(5) != 0, sortByPriority: r.i(6) != 0)
     }
 
     private static let cardCols = "c.id,c.col,c.pos,c.title,c.body,c.tags,c.prio"
@@ -221,9 +233,11 @@ final class DB {
     /// Cards of a project grouped by column id, ordered.
     func board(_ project: Int64) throws -> [Int64: [Card]] {
         var r: [Int64: [Card]] = [:]
-        // Display order: added/manual order, or priority first (3 → none) keeping that order between equals.
-        let order = try sortByPriority() ? "c.col, c.prio DESC, c.pos, c.id" : "c.col, c.pos, c.id"
-        try run("SELECT \(DB.cardCols) FROM cards c JOIN cols k ON k.id=c.col WHERE k.project=? ORDER BY \(order)", [project]) {
+        // Display order per column: added/manual order, or priority first (3 → none) keeping that order between equals.
+        try run("""
+        SELECT \(DB.cardCols) FROM cards c JOIN cols k ON k.id=c.col WHERE k.project=?
+        ORDER BY c.col, CASE WHEN k.sort_prio=1 THEN c.prio ELSE 0 END DESC, c.pos, c.id
+        """, [project]) {
             let c = DB.cardFrom($0); r[c.col, default: []].append(c)
         }
         return r
@@ -296,17 +310,6 @@ final class DB {
         return first
     }
 
-    /// Card order in the app and in `kb`: by priority (true) or added/manual order (false). Shared setting.
-    func sortByPriority() throws -> Bool {
-        var v = false
-        try run("SELECT v FROM meta WHERE k='sort'") { v = $0.t(0) == "prio" }
-        return v
-    }
-
-    func setSortByPriority(_ on: Bool) throws {
-        try run("INSERT INTO meta(k,v) VALUES('sort',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [on ? "prio" : "ajout"])
-    }
-
     func setCurrent(_ project: Int64) throws {
         try run("INSERT INTO meta(k,v) VALUES('cur',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [String(project)])
     }
@@ -353,7 +356,8 @@ final class DB {
             try run("INSERT INTO projects(name,pos,grp) VALUES(?,?,?)", [name, pos, group])
             let id = lastId
             for (i, c) in try columnTemplate().enumerated() {
-                try run("INSERT INTO cols(project,name,pos,color,done) VALUES(?,?,?,?,?)", [id, c.name, i, c.color, c.done ? 1 : 0])
+                try run("INSERT INTO cols(project,name,pos,color,done,sort_prio) VALUES(?,?,?,?,?,?)",
+                        [id, c.name, i, c.color, c.done ? 1 : 0, c.sort == true ? 1 : 0])
             }
             return id
         }
@@ -374,7 +378,9 @@ final class DB {
     func saveColumnTemplate(from project: Int64) throws {
         let cs = try columns(project)
         guard !cs.isEmpty else { throw KBError("aucune colonne") }
-        let t = cs.enumerated().map { i, c in ColumnTemplate(name: c.name, color: c.color ?? DB.autoColorHex(i, of: cs.count), done: c.done) }
+        let t = cs.enumerated().map { i, c in
+            ColumnTemplate(name: c.name, color: c.color ?? DB.autoColorHex(i, of: cs.count), done: c.done, sort: c.sortByPriority)
+        }
         let json = String(decoding: try JSONEncoder().encode(t), as: UTF8.self)
         try run("INSERT INTO meta(k,v) VALUES('template',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [json])
     }
@@ -540,6 +546,10 @@ final class DB {
 
     func setColumnColor(_ id: Int64, _ hex: String?) throws {
         try run("UPDATE cols SET color=? WHERE id=?", [hex, id])
+    }
+
+    func setColumnSort(_ id: Int64, byPriority on: Bool) throws {
+        try run("UPDATE cols SET sort_prio=? WHERE id=?", [on ? 1 : 0, id])
     }
 
     func setColumnDone(_ id: Int64, _ done: Bool) throws {
