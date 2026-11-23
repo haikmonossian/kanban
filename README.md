@@ -9,7 +9,7 @@ Un kanban pour Mac, que tu peux aussi gérer en parlant à Claude.
 
 ## Installer
 
-1. Télécharge **Kanban.dmg** dans la dernière version ([Releases](../../releases/latest)).
+1. Va sur la [dernière version](../../releases/latest) et télécharge le fichier **Kanban-….dmg**.
 2. Ouvre-le et glisse **Kanban** dans le dossier **Applications**.
 3. Lance Kanban. La première fois, macOS affiche un message d'avertissement : clique **OK**.
 4. Ouvre **Réglages Système → Confidentialité et sécurité**, descends tout en bas et clique **Ouvrir quand même**,
