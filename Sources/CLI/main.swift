@@ -418,7 +418,7 @@ func mcpServe(_ db: DB) {
             reply([
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
-                "serverInfo": ["name": "kanban", "version": "1.2"],
+                "serverInfo": ["name": "kanban", "version": "1.3"],
             ])
         case "tools/list":
             reply(["tools": [[
