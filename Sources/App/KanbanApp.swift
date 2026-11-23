@@ -207,11 +207,13 @@ struct Sidebar: View {
                     .onExitCommand { store.renamingGroup = nil }
                     .onChange(of: groupFocus) { _, f in if !f && store.renamingGroup == g.id { store.renameGroup(g.id, store.groupDraft) } }
             } else {
-                Text(g.name)
+                Text(g.name).lineLimit(1)
+                // Count sits right after the name: the trailing edge of a collapsible header is
+                // reserved for the disclosure chevron, so a right-aligned number overflows the pill.
+                let n = store.openCount(group: g.id)
+                if n > 0 { Text("\(n)").monospacedDigit().foregroundStyle(.tertiary) }
             }
-            Spacer()
-            let n = store.openCount(group: g.id)
-            if n > 0 { Text("\(n)").monospacedDigit() }
+            Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
         .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: g.id) }
