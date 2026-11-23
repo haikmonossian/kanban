@@ -313,7 +313,7 @@ final class Store: ObservableObject {
     }
     func resetColumnTemplate() {
         mutate { try db.resetColumnTemplate() }
-        info = "Les nouveaux projets auront les colonnes par défaut : To do, En cours, Terminé."
+        info = "Les nouveaux projets auront les colonnes d'origine : To do, En cours, Terminé."
     }
 
     func setColumnColor(_ id: Int64, _ hex: String?) { mutate { try db.setColumnColor(id, hex) } }

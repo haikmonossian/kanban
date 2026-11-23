@@ -18,7 +18,7 @@ App kanban native macOS, pilotable par Claude via la CLI `kb` en dépensant trè
 **Colonnes**
 - Couleur au choix (clic sur la pastille), réorganisation par la poignée ⠿.
 - Colonne « **terminée** » : cartes barrées et estompées, non comptées comme ouvertes.
-- **Modèle de colonnes** : clic droit sur un projet → « Utiliser ses colonnes pour les nouveaux projets ».
+- **Colonnes par défaut** : clic droit sur un projet → « Définir ces colonnes par défaut » ; chaque nouveau projet les reprend.
 
 **Mac**
 - Design Liquid Glass, thème Système / Clair / Sombre (⇧⌘D).
