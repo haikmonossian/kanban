@@ -217,6 +217,29 @@ final class Store: ObservableObject {
         return true
     }
 
+    /// Native List insertion: a project dropped between rows of a section joins that section's group
+    /// (nil = ungrouped) at that position. This is what makes "drag out of a group" work reliably.
+    func insertProject(payload: String, group: Int64?, at index: Int, sectionIds: [Int64]) {
+        guard payload.hasPrefix(Store.projectDragPrefix),
+              let id = Int64(payload.dropFirst(Store.projectDragPrefix.count)),
+              projects.contains(where: { $0.id == id }) else { return }
+        commitRenames()
+        let others = sectionIds.filter { $0 != id }
+        let before: Int64? = index < sectionIds.count ? sectionIds[index] : nil
+        mutate {
+            try db.tx {
+                try db.setProjectGroup(id, group)
+                if let g = group { try db.setGroupCollapsed(g, false) }
+                let order = try db.projects().map(\.id).filter { $0 != id }
+                let target: Int
+                if let b = before, b != id, let i = order.firstIndex(of: b) { target = i }
+                else if let last = others.last, let i = order.firstIndex(of: last) { target = i + 1 }
+                else { target = order.count }
+                try db.moveProject(id, to: target)
+            }
+        }
+    }
+
     /// Sidebar drag payloads are "kanban-project:<id>".
     static let projectDragPrefix = "kanban-project:"
     @discardableResult

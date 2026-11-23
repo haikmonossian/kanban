@@ -135,7 +135,7 @@ struct Sidebar: View {
         List(selection: $store.selected) {
             // Ungrouped projects. Dropping a project on this header removes it from its group.
             Section {
-                rows(store.projects(in: nil))
+                rows(store.projects(in: nil), group: nil)
             } header: {
                 HStack {
                     Text("Projets")
@@ -158,7 +158,7 @@ struct Sidebar: View {
 
             ForEach(store.groups) { g in
                 Section(isExpanded: Binding(get: { !g.collapsed }, set: { store.setCollapsed(g.id, !$0) })) {
-                    rows(store.projects(in: g.id))
+                    rows(store.projects(in: g.id), group: g.id)
                 } header: {
                     groupHeader(g)
                 }
@@ -173,7 +173,7 @@ struct Sidebar: View {
         }
     }
 
-    private func rows(_ ps: [Project]) -> some View {
+    private func rows(_ ps: [Project], group: Int64?) -> some View {
         let ids = ps.map(\.id)
         return ForEach(ps) { p in
             row(p).tag(p.id)
@@ -181,6 +181,17 @@ struct Sidebar: View {
                 .dropDestination(for: String.self) { items, _ in store.dropProjects(items, onto: p) }
         }
         .onMove { store.moveProjects(in: ids, from: $0, to: $1) }
+        // Drop between rows (from another section): move the project into this section at that spot.
+        .onInsert(of: [.plainText, .utf8PlainText]) { index, providers in
+            for provider in providers {
+                _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
+                    guard let s = obj as? String else { return }
+                    DispatchQueue.main.async {
+                        store.insertProject(payload: s, group: group, at: index, sectionIds: ids)
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
