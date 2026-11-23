@@ -628,7 +628,7 @@ final class DB {
         return r
     }
 
-    /// Opening → closing quote accepted around multi-word tags: +"…", +«…», +“…”.
+    /// Quotes still accepted around tags from the older +"deux mots" syntax.
     private static let tagQuotes: [Character: Character] = ["\"": "\"", "«": "»", "“": "”"]
 
     static func unique(_ ids: [Int64]) -> [Int64] {
@@ -662,30 +662,35 @@ final class DB {
 
     private static func joinTags(_ t: [String]) -> String { cleanTags(t).joined(separator: ",") }
 
-    /// "Fix login !2 +bug" -> ("Fix login", ["bug"], 2). Shared by the app's quick-add and `kb add`.
+    /// Inline syntax shared by the app's quick-add and `kb add`:
+    /// "Relancer le syndic !2 +client +en attente" -> ("Relancer le syndic", ["client", "en attente"], 2).
+    /// Tags go at the end: each starts with "+" and runs until the next "+" (spaces allowed).
+    /// "!0"…"!3" anywhere is the priority. A "+" not followed by a letter ("C++", "+3") stays in the title.
     static func parseInline(_ s: String) -> (title: String, tags: [String], prio: Int?) {
         var words: [String] = [], tags: [String] = [], prio: Int?
-        // Split on spaces, but keep +"multi word tag" (or +«…», +“…”) together.
-        var tokens: [String] = [], cur = "", closing: Character?
-        for ch in s {
-            if let q = closing {
-                cur.append(ch)
-                if ch == q { closing = nil }
-            } else if ch == " " {
-                if !cur.isEmpty { tokens.append(cur); cur = "" }
+        var tag: [String]?   // tag being read (its words)
+        func closeTag() {
+            if let t = tag {
+                // Older syntax +"deux mots" / +«…» still accepted: drop the quotes.
+                let v = t.joined(separator: " ").trimmingCharacters(in: CharacterSet(charactersIn: "\"«»“” "))
+                if !v.isEmpty { tags.append(v) }
+            }
+            tag = nil
+        }
+        for w in s.split(separator: " ", omittingEmptySubsequences: true).map(String.init) {
+            let second = w.dropFirst().first
+            if w.count == 2, w.first == "!", let d = Int(String(w.last!)), (0...3).contains(d) {
+                prio = d
+            } else if w.count > 1, w.first == "+", let c = second, c.isLetter || DB.tagQuotes[c] != nil {
+                closeTag()
+                tag = [String(w.dropFirst())]
+            } else if tag != nil {
+                tag!.append(w)
             } else {
-                cur.append(ch)
-                if cur.count == 2, cur.first == "+", let q = DB.tagQuotes[ch] { closing = q }
+                words.append(w)
             }
         }
-        if !cur.isEmpty { tokens.append(cur) }
-        for w in tokens {
-            let quoted = w.count > 3 && w.first == "+" && DB.tagQuotes[w.dropFirst().first!] == w.last!
-            if w.count == 2, w.first == "!", let d = Int(String(w.last!)), (0...3).contains(d) { prio = d }
-            else if quoted { tags.append(String(w.dropFirst(2).dropLast()).trimmingCharacters(in: .whitespaces)) }
-            else if w.count > 1, w.first == "+", w.dropFirst().first!.isLetter { tags.append(String(w.dropFirst())) }
-            else { words.append(w) }
-        }
+        closeTag()
         let title = words.joined(separator: " ")
         return title.isEmpty ? (s.trimmingCharacters(in: .whitespaces), [], nil) : (title, tags, prio)
     }
@@ -694,7 +699,7 @@ final class DB {
     static func line(_ c: Card, star: Bool = true) -> String {
         var s = "\(c.id) \(flat(c.title))"
         if c.prio > 0 { s += " !\(c.prio)" }
-        for t in c.tags { let f = flat(t); s += f.contains(" ") ? " +\"\(f)\"" : " +\(f)" }
+        for t in c.tags { s += " +\(flat(t))" }
         if star && !c.body.isEmpty { s += " *" }
         return s
     }

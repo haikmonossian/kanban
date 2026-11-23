@@ -11,7 +11,8 @@ App kanban native macOS, pilotable par Claude via la CLI `kb` en dépensant trè
 
 **Organisation**
 - Projets dans une barre latérale repliable, rangés en **groupes** (glisser un projet sur un autre crée un groupe).
-- **Saisie rapide** en haut : `Relancer le client !2 +urgent +"à valider"` crée la carte avec priorité et étiquettes.
+- **Saisie rapide** en haut : `Relancer le client !2 +urgent +à valider` crée la carte avec priorité et étiquettes
+  (étiquettes à la fin, chacune après un `+`, espaces permis).
 - Cartes avec description, priorité (1 à 3), étiquettes ; glisser-déposer entre colonnes.
 
 **Colonnes**
