@@ -146,6 +146,7 @@ struct Sidebar: View {
                     }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .foregroundStyle(.secondary)
+                    .padding(.trailing, 8)
                     .help("Nouveau projet ou groupe")
                 }
                 .contentShape(Rectangle())
