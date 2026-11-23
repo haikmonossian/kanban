@@ -151,6 +151,32 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Drop project(s) onto another project: joins its group, or creates a new group holding both (like iOS folders).
+    @discardableResult
+    func dropProjects(_ payload: [String], onto target: Project) -> Bool {
+        let ids = payload.compactMap { $0.hasPrefix(Store.projectDragPrefix) ? Int64($0.dropFirst(Store.projectDragPrefix.count)) : nil }
+            .filter { id in id != target.id && projects.contains { $0.id == id } }
+        guard !ids.isEmpty else { return false }
+        commitRenames()
+        mutate {
+            try db.tx {
+                let gid: Int64
+                if let g = target.group {
+                    gid = g
+                } else {
+                    let name = try db.freeGroupName("Nouveau groupe")
+                    gid = try db.addGroup(name)
+                    try db.setProjectGroup(target.id, gid)
+                    groupDraft = name
+                    renamingGroup = gid
+                }
+                for id in ids { try db.setProjectGroup(id, gid) }
+                try db.setGroupCollapsed(gid, false)
+            }
+        }
+        return true
+    }
+
     /// Sidebar drag payloads are "kanban-project:<id>".
     static let projectDragPrefix = "kanban-project:"
     @discardableResult

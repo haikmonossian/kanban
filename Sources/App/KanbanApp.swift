@@ -173,6 +173,7 @@ struct Sidebar: View {
         return ForEach(ps) { p in
             row(p).tag(p.id)
                 .draggable(Store.projectDragPrefix + String(p.id))
+                .dropDestination(for: String.self) { items, _ in store.dropProjects(items, onto: p) }
         }
         .onMove { store.moveProjects(in: ids, from: $0, to: $1) }
     }
