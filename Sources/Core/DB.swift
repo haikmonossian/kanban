@@ -598,8 +598,24 @@ final class DB {
     /// "Fix login !2 +bug" -> ("Fix login", ["bug"], 2). Shared by the app's quick-add and `kb add`.
     static func parseInline(_ s: String) -> (title: String, tags: [String], prio: Int?) {
         var words: [String] = [], tags: [String] = [], prio: Int?
-        for w in s.split(separator: " ", omittingEmptySubsequences: true).map(String.init) {
+        // Split on spaces, but keep +"multi word tag" (or +«…», +“…”) together.
+        var tokens: [String] = [], cur = "", closing: Character?
+        for ch in s {
+            if let q = closing {
+                cur.append(ch)
+                if ch == q { closing = nil }
+            } else if ch == " " {
+                if !cur.isEmpty { tokens.append(cur); cur = "" }
+            } else {
+                cur.append(ch)
+                if cur.count == 2, cur.first == "+", let q = ["\"": "\"", "«": "»", "“": "”"][ch] as Character? { closing = q }
+            }
+        }
+        if !cur.isEmpty { tokens.append(cur) }
+        for w in tokens {
+            let quoted = w.count > 3 && w.first == "+" && ["\"", "«", "“"].contains(w.dropFirst().first!) && ["\"", "»", "”"].contains(w.last!)
             if w.count == 2, w.first == "!", let d = Int(String(w.last!)), (0...3).contains(d) { prio = d }
+            else if quoted { tags.append(String(w.dropFirst(2).dropLast()).trimmingCharacters(in: .whitespaces)) }
             else if w.count > 1, w.first == "+", w.dropFirst().first!.isLetter { tags.append(String(w.dropFirst())) }
             else { words.append(w) }
         }
@@ -611,7 +627,7 @@ final class DB {
     static func line(_ c: Card, star: Bool = true) -> String {
         var s = "\(c.id) \(flat(c.title))"
         if c.prio > 0 { s += " !\(c.prio)" }
-        for t in c.tags { s += " +\(flat(t))" }
+        for t in c.tags { let f = flat(t); s += f.contains(" ") ? " +\"\(f)\"" : " +\(f)" }
         if star && !c.body.isEmpty { s += " *" }
         return s
     }

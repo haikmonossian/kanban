@@ -6,7 +6,7 @@ let HELP = """
 kb [@p] [col..] [-a] [-t tag]           tableau (« ls » optionnel ; colonnes terminées repliées, -a = tout)
 kb show id..                            détail + description
 kb find texte                           recherche tous projets (casse/accents ignorés)
-kb add titre [!0-3] [+tag] [-c col] [-d desc] [--top] [@p]   -> id (+ @projet si implicite)
+kb add titre [!0-3] [+tag|+"deux mots"] [-c col] [-d desc] [--top] [@p]   -> id (+ @projet si implicite)
 kb mv id.. col [--top|-at n] [@p]       n = position, 0 = en haut
 kb set id [-T titre] [-d desc] [-t a,b|+a,-b] [-p 0-3] [-c col [--top|-at n]]
 kb note id texte                        ajoute une ligne à la description (tout est littéral)

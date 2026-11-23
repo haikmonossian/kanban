@@ -126,6 +126,7 @@ struct RootView: View {
 // MARK: - Sidebar
 
 struct Sidebar: View {
+    static let chevronGap: CGFloat = 30
     @EnvironmentObject var store: Store
     @State private var confirmDelete: Project?
     @FocusState private var renameFocus: Bool
@@ -208,12 +209,12 @@ struct Sidebar: View {
                     .onChange(of: groupFocus) { _, f in if !f && store.renamingGroup == g.id { store.renameGroup(g.id, store.groupDraft) } }
             } else {
                 Text(g.name).lineLimit(1)
-                // Count sits right after the name: the trailing edge of a collapsible header is
-                // reserved for the disclosure chevron, so a right-aligned number overflows the pill.
-                let n = store.openCount(group: g.id)
-                if n > 0 { Text("\(n)").monospacedDigit().foregroundStyle(.tertiary) }
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+            // Right-aligned like project badges, but kept clear of the disclosure chevron
+            // that collapsible sidebar headers draw at their trailing edge.
+            let n = store.openCount(group: g.id)
+            if n > 0 { Text("\(n)").monospacedDigit().foregroundStyle(.secondary).padding(.trailing, Sidebar.chevronGap) }
         }
         .contentShape(Rectangle())
         .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: g.id) }
@@ -311,7 +312,7 @@ struct BoardScreen: View {
             Image(systemName: "plus.circle.fill")
                 .font(.system(size: 18))
                 .foregroundStyle(Palette.blue)
-            TextField("Ajouter une tâche…   !2 pour la priorité, +tag pour une étiquette", text: $quick, axis: .vertical)
+            TextField("Ajouter une tâche…   !2 priorité · +tag ou +\"deux mots\" étiquette", text: $quick, axis: .vertical)
                 .lineLimit(1...5)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
