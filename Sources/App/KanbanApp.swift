@@ -126,7 +126,6 @@ struct RootView: View {
 // MARK: - Sidebar
 
 struct Sidebar: View {
-    static let chevronGap: CGFloat = 30
     @EnvironmentObject var store: Store
     @State private var confirmDelete: Project?
     @FocusState private var renameFocus: Bool
@@ -157,9 +156,11 @@ struct Sidebar: View {
                 .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: nil) }
             }
 
+            // Plain sections with our own chevron: the system collapsible header adds a chevron on hover,
+            // which changes the header width and makes the right-aligned count jump.
             ForEach(store.groups) { g in
-                Section(isExpanded: Binding(get: { !g.collapsed }, set: { store.setCollapsed(g.id, !$0) })) {
-                    rows(store.projects(in: g.id), group: g.id)
+                Section {
+                    if !g.collapsed { rows(store.projects(in: g.id), group: g.id) }
                 } header: {
                     groupHeader(g)
                 }
@@ -198,6 +199,11 @@ struct Sidebar: View {
     @ViewBuilder
     private func groupHeader(_ g: ProjectGroup) -> some View {
         HStack(spacing: 6) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .rotationEffect(.degrees(g.collapsed ? 0 : 90))
+                .frame(width: 10)
+                .animation(.easeOut(duration: 0.15), value: g.collapsed)
             Image(systemName: "folder").font(.system(size: 11))
             if store.renamingGroup == g.id {
                 TextField("Nom", text: $store.groupDraft)
@@ -211,12 +217,11 @@ struct Sidebar: View {
                 Text(g.name).lineLimit(1)
             }
             Spacer(minLength: 4)
-            // Right-aligned like project badges, but kept clear of the disclosure chevron
-            // that collapsible sidebar headers draw at their trailing edge.
             let n = store.openCount(group: g.id)
-            if n > 0 { Text("\(n)").monospacedDigit().foregroundStyle(.secondary).padding(.trailing, Sidebar.chevronGap) }
+            if n > 0 { Text("\(n)").monospacedDigit().foregroundStyle(.secondary) }
         }
         .contentShape(Rectangle())
+        .onTapGesture { if store.renamingGroup != g.id { store.setCollapsed(g.id, !g.collapsed) } }
         .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: g.id) }
         .contextMenu {
             Button("Nouveau projet dans ce groupe") { store.newProject(in: g.id) }
