@@ -42,7 +42,14 @@ final class DB {
         return dir.appendingPathComponent("kanban.sqlite").path
     }
 
-    private static let defaultColumns = ["To do", "En cours", "Terminé"]
+    /// One column of the template used for new projects.
+    struct ColumnTemplate: Codable, Equatable { var name: String; var color: String?; var done: Bool }
+
+    static let defaultTemplate = [
+        ColumnTemplate(name: "To do", color: nil, done: false),
+        ColumnTemplate(name: "En cours", color: nil, done: false),
+        ColumnTemplate(name: "Terminé", color: nil, done: true),
+    ]
 
     init(path: String = DB.defaultPath) throws {
         guard sqlite3_open_v2(path, &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
@@ -326,11 +333,35 @@ final class DB {
             let pos = try int("SELECT coalesce(max(pos)+1,0) FROM projects")
             try run("INSERT INTO projects(name,pos,grp) VALUES(?,?,?)", [name, pos, group])
             let id = lastId
-            for (i, c) in DB.defaultColumns.enumerated() {
-                try run("INSERT INTO cols(project,name,pos,done) VALUES(?,?,?,?)", [id, c, i, i == DB.defaultColumns.count - 1 ? 1 : 0])
+            for (i, c) in try columnTemplate().enumerated() {
+                try run("INSERT INTO cols(project,name,pos,color,done) VALUES(?,?,?,?,?)", [id, c.name, i, c.color, c.done ? 1 : 0])
             }
             return id
         }
+    }
+
+    // MARK: - Column template (columns of new projects)
+
+    /// Saved template, or To do / En cours / Terminé.
+    func columnTemplate() throws -> [ColumnTemplate] {
+        var json: String?
+        try run("SELECT v FROM meta WHERE k='template'") { json = $0.t(0) }
+        guard let data = json?.data(using: .utf8),
+              let t = try? JSONDecoder().decode([ColumnTemplate].self, from: data), !t.isEmpty else { return DB.defaultTemplate }
+        return t
+    }
+
+    /// New projects will get this project's columns (names, colors, done flags).
+    func saveColumnTemplate(from project: Int64) throws {
+        let cs = try columns(project)
+        guard !cs.isEmpty else { throw KBError("aucune colonne") }
+        let t = cs.enumerated().map { i, c in ColumnTemplate(name: c.name, color: c.color ?? DB.autoColorHex(i, of: cs.count), done: c.done) }
+        let json = String(decoding: try JSONEncoder().encode(t), as: UTF8.self)
+        try run("INSERT INTO meta(k,v) VALUES('template',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [json])
+    }
+
+    func resetColumnTemplate() throws {
+        try run("DELETE FROM meta WHERE k='template'")
     }
 
     func renameProject(_ id: Int64, _ name: String) throws {

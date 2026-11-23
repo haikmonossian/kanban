@@ -15,6 +15,7 @@ kb p [add nom|ren @p nom|rm @p [-f]|mv @p n|grp @p groupe|-]   projets par group
 kb g [add nom|ren groupe nom|rm groupe]  groupes de projets (rm = projets dégroupés)
 kb use @p                               projet par défaut
 kb col [@p] [add nom [-at n]|ren col nom|rm col [-f]|mv col n|done col [on|off]]   (✓ = terminée)
+kb col [@p] save | kb col tpl [reset]   modèle de colonnes des nouveaux projets
 kb - <<'EOF'  (une commande par ligne, sans 'kb' ; erreurs : « !L<n> msg »)
 Colonnes : nom, préfixe, ou todo/doing/done. @p : nom ou préfixe (espaces ignorés). \\n = retour à la ligne dans -d/note.
 Ligne carte : id titre !prio +tag *   (* = a une description)
@@ -177,7 +178,10 @@ func run(_ db: DB, _ argv: [String]) throws {
         for (c, p, k) in try db.search(q) { emit("\(DB.line(c)) [\(DB.flat(p))/\(DB.flat(k))]") }
 
     case "add":
-        let parsed = DB.parseInline(a.pos.joined(separator: " "))
+        // The shell (and batch mode) strip the quotes of +"deux mots": an argument starting with "+"
+        // that contains a space is a multi-word tag, re-quote it for the inline parser.
+        let words = a.pos.map { $0.hasPrefix("+") && $0.contains(" ") ? "+\"\($0.dropFirst())\"" : $0 }
+        let parsed = DB.parseInline(words.joined(separator: " "))
         let p = try project(db, a)
         let col = try a.opt["-c"].map { try db.resolveColumn(p.id, $0) } ?? db.columns(p.id).first
         guard let col else { throw KBError("aucune colonne") }
@@ -299,6 +303,11 @@ func run(_ db: DB, _ argv: [String]) throws {
         case "mv":
             guard rest.count == 2, let n = Int(rest[1]) else { throw KBError("usage: col mv col n") }
             try db.moveColumn(db.resolveColumn(p.id, rest[0]).id, to: n)
+        case "save":
+            try db.saveColumnTemplate(from: p.id)
+        case "tpl":
+            if rest.first == "reset" { try db.resetColumnTemplate(); break }
+            emit(try db.columnTemplate().map { "\(DB.flat($0.name))\($0.done ? "✓" : "")" }.joined(separator: " | "))
         case "done":
             guard rest.count == 1 || rest.count == 2 else { throw KBError("usage: col done col [on|off]") }
             let c = try db.resolveColumn(p.id, rest[0])
@@ -310,7 +319,7 @@ func run(_ db: DB, _ argv: [String]) throws {
             default: throw KBError("usage: col done col [on|off]")
             }
             try db.setColumnDone(c.id, on)
-        default: throw KBError("sous-commande inconnue: col \(sub!) (add|ren|rm|mv|done)")
+        default: throw KBError("sous-commande inconnue: col \(sub!) (add|ren|rm|mv|done|save|tpl)")
         }
 
     default:

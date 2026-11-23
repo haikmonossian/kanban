@@ -263,6 +263,9 @@ struct ColumnView: View {
             Button("Déplacer à gauche") { store.moveColumn(column.id, by: -1) }.disabled(index == 0)
             Button("Déplacer à droite") { store.moveColumn(column.id, by: 1) }.disabled(index == total - 1)
             Divider()
+            Button("Enregistrer ces colonnes comme modèle") { store.saveColumnTemplate() }
+            Button("Revenir au modèle par défaut") { store.resetColumnTemplate() }
+            Divider()
             Button("Supprimer la colonne", role: .destructive) {
                 if store.cardCount(column.id) == 0 { store.deleteColumn(column.id) } else { confirmDelete = true }
             }.disabled(total <= 1)

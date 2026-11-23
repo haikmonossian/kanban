@@ -17,6 +17,8 @@ final class Store: ObservableObject {
         }
     }
     @Published var error: String?
+    /// Short confirmation shown to the user (e.g. template saved).
+    @Published var info: String?
 
     /// Inline renames. Drafts live here (not in the views) so a rename superseded by another action is saved, not lost.
     @Published var renamingProject: Int64?
@@ -301,6 +303,17 @@ final class Store: ObservableObject {
             columnDraft = "Nouvelle colonne"
             renamingColumn = id
         }
+    }
+
+    /// New projects will start with the current project's columns.
+    func saveColumnTemplate() {
+        guard let p = selected else { return }
+        mutate { try db.saveColumnTemplate(from: p) }
+        info = "Les nouveaux projets auront ces colonnes : \(columns.map(\.name).joined(separator: ", "))."
+    }
+    func resetColumnTemplate() {
+        mutate { try db.resetColumnTemplate() }
+        info = "Les nouveaux projets auront les colonnes par défaut : To do, En cours, Terminé."
     }
 
     func setColumnColor(_ id: Int64, _ hex: String?) { mutate { try db.setColumnColor(id, hex) } }

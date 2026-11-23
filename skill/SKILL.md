@@ -20,6 +20,7 @@ kb p                              # projets, puis [Groupe] et ses projets (* = c
 kb p add nom | p ren @p nom | p rm @p -f | p mv @p n | p grp @p groupe|-
 kb g [add nom | ren groupe nom | rm groupe]   # groupes de projets
 kb col [@p] [add nom [-at n] | ren col nom | rm col [-f] | mv col n | done col [on|off]]
+kb col [@p] save | kb col tpl [reset]   # modèle de colonnes appliqué aux nouveaux projets
 ```
 `\n` dans `-d` ou `note` = retour à la ligne. Plusieurs opérations → un seul appel (chaque ligne est atomique, une erreur s'affiche `!L<n> message`) :
 ```

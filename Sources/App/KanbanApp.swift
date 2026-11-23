@@ -56,5 +56,8 @@ struct RootView: View {
         .alert("Erreur", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }
+        .alert("Modèle de colonnes", isPresented: Binding(get: { store.info != nil }, set: { if !$0 { store.info = nil } })) {
+            Button("OK") { store.info = nil }
+        } message: { Text(store.info ?? "") }
     }
 }
