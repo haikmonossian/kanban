@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct KanbanApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = Store()
     @AppStorage("appearance") private var appearance: Appearance = .system
 
@@ -9,6 +10,7 @@ struct KanbanApp: App {
         Window("Kanban", id: "main") {
             RootView()
                 .environmentObject(store)
+                .onAppear { appDelegate.store = store }
                 .frame(minWidth: 820, minHeight: 500)
                 .onAppear { appearance.apply() }
                 .onChange(of: appearance) { _, a in a.apply() }
@@ -33,6 +35,8 @@ struct KanbanApp: App {
 
 struct RootView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject private var appDelegate: AppDelegate
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -45,6 +49,10 @@ struct RootView: View {
         // No opaque header bar: title and search float on the same backdrop as the board,
         // so the floating glass sidebar sits over one continuous surface (macOS 26 style).
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .onAppear {
+            // Lets the Dock menu reopen the window after it was closed.
+            appDelegate.showMainWindow = { [openWindow] in openWindow(id: "main") }
+        }
         .alert("Erreur", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }

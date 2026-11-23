@@ -11,7 +11,7 @@ final class Store: ObservableObject {
     @Published var selected: Int64? {
         didSet {
             guard selected != oldValue, !reloading else { return }
-            if let id = selected { try? db.setCurrent(id) }
+            if let id = selected { try? db.setCurrent(id); remember(id) }
             loadBoard()
             version = db.dataVersion()
         }
@@ -34,6 +34,7 @@ final class Store: ObservableObject {
     init() {
         db = Store.openDatabase()
         reloadAll()
+        if let id = selected { remember(id) }
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
@@ -64,6 +65,23 @@ final class Store: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - Recent projects (Dock menu)
+
+    private static let recentKey = "recentProjects"
+
+    /// Last opened projects, most recent first (existing ones only).
+    var recentProjects: [Project] {
+        let ids = UserDefaults.standard.array(forKey: Store.recentKey) as? [Int64] ?? []
+        return ids.compactMap { id in projects.first { $0.id == id } }.prefix(3).map { $0 }
+    }
+
+    private func remember(_ id: Int64) {
+        var ids = UserDefaults.standard.array(forKey: Store.recentKey) as? [Int64] ?? []
+        ids.removeAll { $0 == id }
+        ids.insert(id, at: 0)
+        UserDefaults.standard.set(Array(ids.prefix(10)), forKey: Store.recentKey)
     }
 
     // MARK: - Loading
