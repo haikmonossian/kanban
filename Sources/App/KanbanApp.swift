@@ -222,12 +222,15 @@ struct Sidebar: View {
                 .rotationEffect(.degrees(g.collapsed ? 0 : 90))
                 .frame(width: 12)
                 .opacity(hoveredGroup == g.id ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: g.collapsed)
                 .padding(.trailing, 8)
         }
         .onHover { hoveredGroup = $0 ? g.id : (hoveredGroup == g.id ? nil : hoveredGroup) }
         .contentShape(Rectangle())
-        .onTapGesture { if store.renamingGroup != g.id { store.setCollapsed(g.id, !g.collapsed) } }
+        .onTapGesture {
+            guard store.renamingGroup != g.id else { return }
+            // Rows slide in/out and the chevron turns together.
+            withAnimation(.snappy(duration: 0.28)) { store.setCollapsed(g.id, !g.collapsed) }
+        }
         // A click on the header must only toggle the group: no selection / focus highlight.
         .selectionDisabled()
         .focusEffectDisabled()
