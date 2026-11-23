@@ -19,7 +19,7 @@ struct KanbanApp: App {
         .commands {
             SidebarCommands()
             CommandGroup(after: .appInfo) {
-                // One or the other: Chat (most users) first; Code uses fewer tokens.
+                // Chat (most users) first; Code uses fewer tokens. Both can be installed: same kanban.
                 Button("Connecter au Chat de Claude…") { ClaudeSetup.connectChat() }
                 Button("Installer kb pour Claude Code…") { ClaudeSetup.installForCode() }
             }
