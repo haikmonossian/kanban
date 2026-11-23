@@ -6,8 +6,10 @@ struct Sidebar: View {
     @EnvironmentObject var store: Store
     @State private var confirmDelete: Project?
     @State private var hoveredGroup: Int64?
-    /// Expand/collapse is applied here first (animated), then persisted to the DB.
-    @State private var expandedOverride: [Int64: Bool] = [:]
+    /// How much the native section chevron (shown on hover) narrows the header, measured on first hover.
+    @AppStorage("groupChevronShrink") private var chevronShrink: Double = 0
+    @State private var headerWidth: [Int64: CGFloat] = [:]
+    private static let chevronRoom: CGFloat = 18
 
     var body: some View {
         List(selection: $store.selected) {
@@ -17,13 +19,10 @@ struct Sidebar: View {
                 projectsHeader
             }
 
-            // Plain sections with our own chevron: the system collapsible header adds its chevron on hover,
-            // which changes the header width and makes the right-aligned count jump.
+            // Native collapsible sections: system chevron on the right and the system expand/collapse animation.
             ForEach(store.groups) { g in
-                Section {
-                    // Always the same ForEach, fed an empty list when collapsed: the List then animates
-                    // row insertions/removals (a conditional block would just pop in and out).
-                    rows(isExpanded(g) ? store.projects(in: g.id) : [], group: g.id)
+                Section(isExpanded: Binding(get: { !g.collapsed }, set: { open in setExpanded(g, open) })) {
+                    rows(store.projects(in: g.id), group: g.id)
                 } header: {
                     groupHeader(g)
                 }
@@ -34,6 +33,10 @@ struct Sidebar: View {
                             isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
             Button("Supprimer", role: .destructive) { if let p = confirmDelete { store.deleteProject(p.id) } }
         }
+    }
+
+    private func setExpanded(_ g: ProjectGroup, _ open: Bool) {
+        withAnimation(.snappy(duration: 0.3)) { store.setCollapsed(g.id, !open) }
     }
 
     // MARK: Headers
@@ -60,7 +63,8 @@ struct Sidebar: View {
     }
 
     private func groupHeader(_ g: ProjectGroup) -> some View {
-        HStack(spacing: 6) {
+        let hovered = hoveredGroup == g.id
+        return HStack(spacing: 6) {
             Image(systemName: "folder").font(.system(size: 11))
             if store.renamingGroup == g.id {
                 RenameField(text: $store.groupDraft,
@@ -71,20 +75,21 @@ struct Sidebar: View {
             }
             Spacer(minLength: 4)
             let n = store.openCount(group: g.id)
-            if n > 0 { Text("\(n)").monospacedDigit().foregroundStyle(.secondary) }
-            // The chevron's slot is always reserved (only its opacity changes on hover), so the count never moves.
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .rotationEffect(.degrees(isExpanded(g) ? 90 : 0))
-                .frame(width: 12)
-                .opacity(hoveredGroup == g.id ? 1 : 0)
-                .padding(.trailing, 8)
+            if n > 0 {
+                // Room is kept on the right for the system chevron; when it appears on hover the header
+                // narrows by `chevronShrink`, so the padding shrinks by the same amount and the count stays put.
+                Text("\(n)").monospacedDigit().foregroundStyle(.secondary)
+                    .padding(.trailing, max(Self.chevronRoom - (hovered ? chevronShrink : 0), 0))
+            }
         }
+        .background(GeometryReader { geo in
+            Color.clear.onChange(of: geo.size.width, initial: true) { _, w in measure(g.id, width: w) }
+        })
         .contentShape(Rectangle())
         .onHover { inside in
             if inside { hoveredGroup = g.id } else if hoveredGroup == g.id { hoveredGroup = nil }
         }
-        .onTapGesture { if store.renamingGroup != g.id { toggle(g) } }
+        .onTapGesture { if store.renamingGroup != g.id { setExpanded(g, g.collapsed) } }
         // A click on the header only toggles the group: no selection / focus highlight.
         .selectionDisabled()
         .focusEffectDisabled()
@@ -97,15 +102,15 @@ struct Sidebar: View {
         }
     }
 
-    private func isExpanded(_ g: ProjectGroup) -> Bool { expandedOverride[g.id] ?? !g.collapsed }
-
-    private func toggle(_ g: ProjectGroup) {
-        let open = !isExpanded(g)
-        withAnimation(.snappy(duration: 0.3)) { expandedOverride[g.id] = open }
-        // Persist after the animation so the DB reload can't interrupt it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            store.setCollapsed(g.id, !open)
-            expandedOverride[g.id] = nil
+    /// Learns how much the header narrows while hovered (system chevron appearing).
+    private func measure(_ id: Int64, width w: CGFloat) {
+        if hoveredGroup == id {
+            if let base = headerWidth[id] {
+                let shrink = base - w
+                if shrink >= 0 && shrink < 60 { chevronShrink = Double(shrink) }
+            }
+        } else {
+            headerWidth[id] = w
         }
     }
 

@@ -46,7 +46,6 @@ struct BoardScreen: View {
                     addColumnButton
                 }
                 .overlay(alignment: .topLeading) { insertionLine }
-                .animation(.snappy(duration: 0.2), value: dropTarget?.gap)
                 .padding(.horizontal, 22)
                 .padding(.top, 4)
                 .padding(.bottom, 22)
@@ -88,21 +87,26 @@ struct BoardScreen: View {
     }
 
     /// Vertical line in the gap where the dragged column will land.
-    @ViewBuilder
+    /// Only the line animates (sliding between gaps); the dragged column itself follows the pointer 1:1.
     private var insertionLine: some View {
-        if let gap = dropTarget?.gap {
-            Capsule()
-                .fill(Color.accentColor)
-                .frame(width: 4)
-                .frame(maxHeight: .infinity)
-                .offset(x: CGFloat(gap) * Self.step - Self.columnSpacing / 2 - 2)
-                .transition(.opacity)
-        }
+        let gap = dropTarget?.gap
+        return Capsule()
+            .fill(Color.accentColor)
+            .frame(width: 4)
+            .frame(maxHeight: .infinity)
+            .offset(x: CGFloat(gap ?? 0) * Self.step - Self.columnSpacing / 2 - 2)
+            .opacity(gap == nil ? 0 : 1)
+            .animation(.snappy(duration: 0.18), value: gap)
+            .allowsHitTesting(false)
     }
 
+    /// Drop: move + reset in one animated transaction, so the column glides from where it was released.
     private func endDrag() {
-        if let d = drag, let target = dropTarget { store.moveColumn(d.id, to: target.index) }
-        withAnimation(.snappy(duration: 0.25)) { drag = nil }
+        let target = dropTarget
+        withAnimation(.snappy(duration: 0.3)) {
+            if let d = drag, let t = target { store.moveColumn(d.id, to: t.index) }
+            drag = nil
+        }
     }
 
     private var addColumnButton: some View {
@@ -232,10 +236,14 @@ struct ColumnView: View {
 
     /// ⠿ handle: drag it to move the column (preview + insertion line are drawn by BoardScreen).
     private var grip: some View {
-        Image(systemName: "circle.grid.2x3.fill")
-            .font(.system(size: 9))
-            .foregroundStyle(.tertiary)
-            .frame(width: 14, height: 20)
+        // 6 dots (2 × 3), drawn rather than an SF Symbol so it always renders.
+        Grid(horizontalSpacing: 2.5, verticalSpacing: 2.5) {
+            ForEach(0..<3, id: \.self) { _ in
+                GridRow { Circle().frame(width: 3, height: 3); Circle().frame(width: 3, height: 3) }
+            }
+        }
+        .foregroundStyle(.tertiary)
+        .frame(width: 14, height: 20)
             .contentShape(Rectangle())
             .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
             .gesture(
