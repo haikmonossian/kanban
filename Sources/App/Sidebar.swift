@@ -155,7 +155,6 @@ struct Sidebar: View {
                     }
                     Divider()
                     Button("Définir ces colonnes par défaut") { store.saveColumnTemplate(from: p) }
-                    Button("Rétablir les colonnes d'origine") { store.resetColumnTemplate() }
                     Divider()
                     Button("Supprimer…", role: .destructive) { confirmDelete = p }
                         .disabled(store.projects.count <= 1)

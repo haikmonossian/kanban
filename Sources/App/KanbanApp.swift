@@ -25,6 +25,8 @@ struct KanbanApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Nouveau projet") { store.newProject() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
+                // Only affects projects created later, hence its place next to "Nouveau projet".
+                Button("Nouveaux projets : colonnes d'origine (To do, En cours, Terminé)") { store.resetColumnTemplate() }
             }
             CommandGroup(after: .sidebar) {
                 Button("Thème : \(appearance.label) → \(appearance.next.label)") { appearance = appearance.next }
