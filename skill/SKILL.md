@@ -16,8 +16,9 @@ kb mv id.. col [--top|-at n]      # n = position, 0 = en haut
 kb set id [-T titre] [-d desc] [-t a,b | +a,-b] [-p 0-3] [-c col]
 kb note id texte                  # ajoute une ligne à la description, texte littéral
 kb rm id..
-kb p                              # projets (* = courant, nombre = cartes ouvertes)
-kb p add nom | p ren @p nom | p rm @p -f | p mv @p n
+kb p                              # projets, puis [Groupe] et ses projets (* = courant, nombre = cartes ouvertes)
+kb p add nom | p ren @p nom | p rm @p -f | p mv @p n | p grp @p groupe|-
+kb g [add nom | ren groupe nom | rm groupe]   # groupes de projets
 kb col [@p] [add nom [-at n] | ren col nom | rm col [-f] | mv col n | done col [on|off]]
 ```
 `\n` dans `-d` ou `note` = retour à la ligne. Plusieurs opérations → un seul appel (chaque ligne est atomique, une erreur s'affiche `!L<n> message`) :

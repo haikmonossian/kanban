@@ -8,7 +8,8 @@ struct KBError: Error, CustomStringConvertible {
     init(_ s: String) { description = s }
 }
 
-struct Project: Identifiable, Hashable { var id: Int64; var name: String; var pos: Int64 }
+struct Project: Identifiable, Hashable { var id: Int64; var name: String; var pos: Int64; var group: Int64? = nil }
+struct ProjectGroup: Identifiable, Hashable { var id: Int64; var name: String; var pos: Int64; var collapsed: Bool }
 struct Column: Identifiable, Hashable {
     var id: Int64; var project: Int64; var name: String; var pos: Int64
     /// Hex like "#4D8FF5"; nil = automatic color from position.
@@ -25,6 +26,7 @@ struct Card: Identifiable, Hashable {
 struct Row {
     let s: OpaquePointer
     func i(_ c: Int32) -> Int64 { sqlite3_column_int64(s, c) }
+    func isNull(_ c: Int32) -> Bool { sqlite3_column_type(s, c) == SQLITE_NULL }
     func t(_ c: Int32) -> String { sqlite3_column_text(s, c).map { String(cString: $0) } ?? "" }
 }
 
@@ -74,12 +76,21 @@ final class DB {
         """)
         try tx {
             // v2: per-column color + done flag. Existing boards: last column of each project becomes "done".
+            // v3: project groups (one level, like Notes folders).
+            if try !hasColumn("projects", "grp") {
+                try exec("""
+                CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, pos INTEGER NOT NULL,
+                    collapsed INTEGER NOT NULL DEFAULT 0);
+                ALTER TABLE projects ADD COLUMN grp INTEGER REFERENCES groups(id) ON DELETE SET NULL;
+                """)
+            }
             if try !hasColumn("cols", "done") {
                 try exec("""
                 ALTER TABLE cols ADD COLUMN color TEXT;
                 ALTER TABLE cols ADD COLUMN done INTEGER NOT NULL DEFAULT 0;
                 UPDATE cols SET done=1 WHERE id IN (
-                  SELECT (SELECT id FROM cols c2 WHERE c2.project=p.id ORDER BY pos DESC, id DESC LIMIT 1) FROM projects p);
+                  SELECT (SELECT id FROM cols c2 WHERE c2.project=p.id ORDER BY pos DESC, id DESC LIMIT 1) FROM projects p
+                  WHERE (SELECT count(*) FROM cols c3 WHERE c3.project=p.id) >= 2);
                 """)
             }
             if try int("SELECT count(*) FROM projects") == 0 { _ = try addProject("Perso") }
@@ -164,7 +175,9 @@ final class DB {
 
     func projects() throws -> [Project] {
         var r: [Project] = []
-        try run("SELECT id,name,pos FROM projects ORDER BY pos,id") { r.append(Project(id: $0.i(0), name: $0.t(1), pos: $0.i(2))) }
+        try run("SELECT id,name,pos,grp FROM projects ORDER BY pos,id") {
+            r.append(Project(id: $0.i(0), name: $0.t(1), pos: $0.i(2), group: $0.isNull(3) ? nil : $0.i(3)))
+        }
         return r
     }
 
@@ -298,7 +311,7 @@ final class DB {
         switch n {
         case "todo": if let c = cs.first { return c }
         case "doing", "wip": if cs.count >= 3 { return cs[1] }
-        case "done": if let c = cs.first(where: { $0.done }) ?? cs.last { return c }
+        case "done": if let i = DB.doneIndex(cs) { return cs[i] }
         default: break
         }
         let m = cs.filter { DB.norm($0.name).hasPrefix(n) }
@@ -309,11 +322,11 @@ final class DB {
     // MARK: - Projects
 
     @discardableResult
-    func addProject(_ name: String) throws -> Int64 {
+    func addProject(_ name: String, group: Int64? = nil) throws -> Int64 {
         let name = try DB.cleanName(name)
         return try tx {
             let pos = try int("SELECT coalesce(max(pos)+1,0) FROM projects")
-            try run("INSERT INTO projects(name,pos) VALUES(?,?)", [name, pos])
+            try run("INSERT INTO projects(name,pos,grp) VALUES(?,?,?)", [name, pos, group])
             let id = lastId
             for (i, c) in DB.defaultColumns.enumerated() {
                 try run("INSERT INTO cols(project,name,pos,done) VALUES(?,?,?,?)", [id, c, i, i == DB.defaultColumns.count - 1 ? 1 : 0])
@@ -337,11 +350,105 @@ final class DB {
         }
     }
 
+    func moveProjectInGroup(_ id: Int64, to index: Int) throws {
+        try tx {
+            let all = try projects()
+            guard let me = all.first(where: { $0.id == id }) else { throw KBError("projet introuvable") }
+            let slots = all.enumerated().filter { $0.element.group == me.group }.map { $0.offset }
+            var subset = slots.map { all[$0].id }.filter { $0 != id }
+            subset.insert(id, at: max(0, min(index, subset.count)))
+            var order = all.map(\.id)
+            for (slot, pid) in zip(slots, subset) { order[slot] = pid }
+            try renumber("projects", order)
+        }
+    }
+
     func moveProject(_ id: Int64, to index: Int) throws {
         try tx {
             var ids = try projects().map { $0.id }.filter { $0 != id }
             ids.insert(id, at: max(0, min(index, ids.count)))
             try renumber("projects", ids)
+        }
+    }
+
+    /// Where "done" lives: leftmost column of the trailing run of done columns; else the last done column; else the last column.
+    static func doneIndex(_ cs: [Column]) -> Int? {
+        guard !cs.isEmpty else { return nil }
+        var i = cs.count
+        while i > 0 && cs[i - 1].done { i -= 1 }
+        if i < cs.count { return i }
+        return cs.lastIndex { $0.done } ?? cs.count - 1
+    }
+
+    // MARK: - Groups
+
+    func groups() throws -> [ProjectGroup] {
+        var r: [ProjectGroup] = []
+        try run("SELECT id,name,pos,collapsed FROM groups ORDER BY pos,id") {
+            r.append(ProjectGroup(id: $0.i(0), name: $0.t(1), pos: $0.i(2), collapsed: $0.i(3) != 0))
+        }
+        return r
+    }
+
+    func resolveGroup(_ ref: String) throws -> ProjectGroup {
+        let gs = try groups()
+        var r = ref.trimmingCharacters(in: .whitespaces)
+        if r.hasPrefix("[") && r.hasSuffix("]") && r.count >= 2 { r = String(r.dropFirst().dropLast()) }
+        let n = DB.norm(r)
+        guard !n.isEmpty else { throw KBError("groupe vide") }
+        if let id = Int64(r), let g = gs.first(where: { $0.id == id }), !gs.contains(where: { DB.norm($0.name) == n }) { return g }
+        if let g = gs.first(where: { DB.norm($0.name) == n }) { return g }
+        let m = gs.filter { DB.norm($0.name).hasPrefix(n) }
+        if m.count == 1 { return m[0] }
+        throw KBError("groupe \(m.isEmpty ? "inconnu" : "ambigu"): \(ref) (\(gs.map { $0.name }.joined(separator: "|")))")
+    }
+
+    @discardableResult
+    func addGroup(_ name: String) throws -> Int64 {
+        let name = try checkGroupName(name, except: nil)
+        return try tx {
+            let pos = try int("SELECT coalesce(max(pos)+1,0) FROM groups")
+            try run("INSERT INTO groups(name,pos) VALUES(?,?)", [name, pos])
+            return lastId
+        }
+    }
+
+    func renameGroup(_ id: Int64, _ name: String) throws {
+        try run("UPDATE groups SET name=? WHERE id=?", [checkGroupName(name, except: id), id])
+    }
+
+    private func checkGroupName(_ name: String, except: Int64?) throws -> String {
+        let n = try DB.cleanName(name)
+        if n == "-" || n.hasPrefix("[") || n.hasSuffix("]") { throw KBError("nom de groupe invalide: \(n)") }
+        if try groups().contains(where: { $0.id != except && DB.norm($0.name) == DB.norm(n) }) { throw KBError("groupe existant: \(n)") }
+        return n
+    }
+
+    /// "Nouveau groupe", "Nouveau groupe 2", ... (first free name).
+    func freeGroupName(_ base: String) throws -> String {
+        let taken = Set(try groups().map { DB.norm($0.name) })
+        if !taken.contains(DB.norm(base)) { return base }
+        var i = 2
+        while taken.contains(DB.norm("\(base) \(i)")) { i += 1 }
+        return "\(base) \(i)"
+    }
+
+    /// Projects of a deleted group become ungrouped (nothing else is deleted).
+    func deleteGroup(_ id: Int64) throws {
+        try tx {
+            try run("UPDATE projects SET grp=NULL WHERE grp=?", [id])
+            try run("DELETE FROM groups WHERE id=?", [id])
+        }
+    }
+
+    func setGroupCollapsed(_ id: Int64, _ on: Bool) throws {
+        try run("UPDATE groups SET collapsed=? WHERE id=?", [on ? 1 : 0, id])
+    }
+
+    func setProjectGroup(_ project: Int64, _ group: Int64?) throws {
+        try tx {
+            if let g = group, try int("SELECT count(*) FROM groups WHERE id=?", [g]) == 0 { throw KBError("groupe introuvable") }
+            try run("UPDATE projects SET grp=? WHERE id=?", [group, project])
         }
     }
 

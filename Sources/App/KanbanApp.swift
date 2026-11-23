@@ -124,28 +124,39 @@ struct RootView: View {
 
 struct Sidebar: View {
     @EnvironmentObject var store: Store
-    @State private var draft = ""
     @State private var confirmDelete: Project?
     @FocusState private var renameFocus: Bool
+    @FocusState private var groupFocus: Bool
 
     var body: some View {
         List(selection: $store.selected) {
+            // Ungrouped projects. Dropping a project on this header removes it from its group.
             Section {
-                ForEach(store.projects) { p in
-                    row(p).tag(p.id)
-                }
-                .onMove { store.moveProjects(from: $0, to: $1) }
+                rows(store.projects(in: nil))
             } header: {
                 HStack {
                     Text("Projets")
                     Spacer()
-                    Button { store.newProject() } label: {
+                    Menu {
+                        Button("Nouveau projet") { store.newProject() }
+                        Button("Nouveau groupe") { store.newGroup() }
+                    } label: {
                         Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
                             .frame(width: 20, height: 20).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .foregroundStyle(.secondary)
-                    .help("Nouveau projet (⇧⌘N)")
+                    .help("Nouveau projet ou groupe")
+                }
+                .contentShape(Rectangle())
+                .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: nil) }
+            }
+
+            ForEach(store.groups) { g in
+                Section(isExpanded: Binding(get: { !g.collapsed }, set: { store.setCollapsed(g.id, !$0) })) {
+                    rows(store.projects(in: g.id))
+                } header: {
+                    groupHeader(g)
                 }
             }
         }
@@ -156,21 +167,71 @@ struct Sidebar: View {
         }
     }
 
+    private func rows(_ ps: [Project]) -> some View {
+        let ids = ps.map(\.id)
+        return ForEach(ps) { p in
+            row(p).tag(p.id)
+                .draggable(Store.projectDragPrefix + String(p.id))
+        }
+        .onMove { store.moveProjects(in: ids, from: $0, to: $1) }
+    }
+
+    @ViewBuilder
+    private func groupHeader(_ g: ProjectGroup) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "folder").font(.system(size: 11))
+            if store.renamingGroup == g.id {
+                TextField("Nom", text: $store.groupDraft)
+                    .textFieldStyle(.plain)
+                    .focused($groupFocus)
+                    .onAppear { DispatchQueue.main.async { groupFocus = true } }
+                    .onSubmit { store.renameGroup(g.id, store.groupDraft) }
+                    .onExitCommand { store.renamingGroup = nil }
+                    .onChange(of: groupFocus) { _, f in if !f && store.renamingGroup == g.id { store.renameGroup(g.id, store.groupDraft) } }
+            } else {
+                Text(g.name)
+            }
+            Spacer()
+            let n = store.openCount(group: g.id)
+            if n > 0 { Text("\(n)").monospacedDigit() }
+        }
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: g.id) }
+        .contextMenu {
+            Button("Nouveau projet dans ce groupe") { store.newProject(in: g.id) }
+            Button("Renommer") { store.startRenameGroup(g) }
+            Divider()
+            Button("Supprimer le groupe (garde les projets)", role: .destructive) { store.deleteGroup(g.id) }
+        }
+    }
+
     @ViewBuilder
     private func row(_ p: Project) -> some View {
         if store.renamingProject == p.id {
-            TextField("Nom", text: $draft)
+            TextField("Nom", text: $store.projectDraft)
                 .textFieldStyle(.plain)
                 .focused($renameFocus)
-                .onAppear { draft = p.name; DispatchQueue.main.async { renameFocus = true } }
-                .onSubmit { store.renameProject(p.id, draft) }
+                .onAppear { DispatchQueue.main.async { renameFocus = true } }
+                .onSubmit { store.renameProject(p.id, store.projectDraft) }
                 .onExitCommand { store.renamingProject = nil }
-                .onChange(of: renameFocus) { _, f in if !f && store.renamingProject == p.id { store.renameProject(p.id, draft) } }
+                .onChange(of: renameFocus) { _, f in if !f && store.renamingProject == p.id { store.renameProject(p.id, store.projectDraft) } }
         } else {
             Label(p.name, systemImage: "square.stack.3d.up")
                 .badge(store.counts[p.id] ?? 0)
                 .contextMenu {
-                    Button("Renommer") { store.renamingProject = p.id }
+                    Button("Renommer") { store.startRenameProject(p) }
+                    Menu("Déplacer vers") {
+                        Button("Aucun groupe") { store.setGroup(p.id, nil) }.disabled(p.group == nil)
+                        if !store.groups.isEmpty { Divider() }
+                        ForEach(store.groups) { g in
+                            Button(g.name) { store.setGroup(p.id, g.id) }.disabled(p.group == g.id)
+                        }
+                        Divider()
+                        Button("Nouveau groupe…") {
+                            if let g = store.newGroup() { store.setGroup(p.id, g) }
+                        }
+                    }
+                    Divider()
                     Button("Supprimer…", role: .destructive) { confirmDelete = p }
                         .disabled(store.projects.count <= 1)
                 }
@@ -312,7 +373,7 @@ struct ColumnView: View {
                                 .onTapGesture { editing = c }
                                 .draggable(Store.dragPayload(c.id))
                                 .dropDestination(for: String.self) { items, _ in
-                                    store.drop(items, into: column.id, before: c.id); return true
+                                    store.drop(items, into: column.id, before: c.id)
                                 }
                         }
                         if adding { addField }
@@ -344,7 +405,7 @@ struct ColumnView: View {
         )
         .contentShape(Rectangle())
         .dropDestination(for: String.self) { items, _ in
-            store.drop(items, into: column.id, before: nil); return true
+            store.drop(items, into: column.id, before: nil)
         } isTargeted: { targeted = $0 }
         .animation(.easeOut(duration: 0.15), value: targeted)
         .confirmationDialog("Supprimer « \(column.name) » et ses \(store.cardCount(column.id)) cartes ?", isPresented: $confirmDelete) {

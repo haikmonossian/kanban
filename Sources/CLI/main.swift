@@ -11,7 +11,8 @@ kb mv id.. col [--top|-at n] [@p]       n = position, 0 = en haut
 kb set id [-T titre] [-d desc] [-t a,b|+a,-b] [-p 0-3] [-c col [--top|-at n]]
 kb note id texte                        ajoute une ligne à la description (tout est littéral)
 kb rm id..
-kb p [add nom|ren @p nom|rm @p [-f]|mv @p n]   projets (* = courant)
+kb p [add nom|ren @p nom|rm @p [-f]|mv @p n|grp @p groupe|-]   projets par groupe (* = courant ; mv n = position dans son groupe)
+kb g [add nom|ren groupe nom|rm groupe]  groupes de projets (rm = projets dégroupés)
 kb use @p                               projet par défaut
 kb col [@p] [add nom [-at n]|ren col nom|rm col [-f]|mv col n|done col [on|off]]   (✓ = terminée)
 kb - <<'EOF'  (une commande par ligne, sans 'kb' ; erreurs : « !L<n> msg »)
@@ -28,10 +29,11 @@ let specs: [String: (valued: Set<String>, bools: Set<String>, proj: Bool)] = [
     "show": ([], [], false), "rm": ([], [], false), "find": ([], [], false),
     "use": ([], [], true),
     "p": ([], ["-f"], true),
+    "g": ([], [], false),
     "col": (["-at"], ["-f"], true),
 ]
 let aliases = ["l": "ls", "a": "add", "m": "mv", "s": "set", "n": "note", "f": "find",
-               "proj": "p", "projects": "p", "c": "col", "h": "help", "-h": "help", "--help": "help"]
+               "proj": "p", "projects": "p", "groups": "g", "c": "col", "h": "help", "-h": "help", "--help": "help"]
 
 struct Args {
     var pos: [String] = []
@@ -224,9 +226,20 @@ func run(_ db: DB, _ argv: [String]) throws {
         let rest = Array(a.pos.dropFirst())
         switch sub {
         case nil:
+            // Ungrouped projects first, then one "[Groupe]" header per group.
             let cur = try db.currentProject().id
             let counts = try db.openCounts()
-            for p in try db.projects() { emit("@\(p.name)\(p.id == cur ? "*" : "") \(counts[p.id] ?? 0)") }
+            let ps = try db.projects()
+            let line = { (p: Project) in "@\(p.name)\(p.id == cur ? "*" : "") \(counts[p.id] ?? 0)" }
+            ps.filter { $0.group == nil }.forEach { emit(line($0)) }
+            for g in try db.groups() {
+                emit("[\(g.name)]")
+                ps.filter { $0.group == g.id }.forEach { emit(line($0)) }
+            }
+        case "grp":
+            guard let ref = a.proj, rest.count == 1 else { throw KBError("usage: p grp @p groupe|-") }
+            let gid = rest[0] == "-" ? nil : try db.resolveGroup(rest[0]).id
+            try db.setProjectGroup(db.resolveProject(ref).id, gid)
         case "add":
             guard !rest.isEmpty else { throw KBError("usage: p add nom") }
             try db.addProject(rest.joined(separator: " "))
@@ -241,8 +254,27 @@ func run(_ db: DB, _ argv: [String]) throws {
             try db.deleteProject(p.id)
         case "mv":
             guard let ref = a.proj, let n = rest.first.flatMap({ Int($0) }) else { throw KBError("usage: p mv @p n") }
-            try db.moveProject(db.resolveProject(ref).id, to: n)
-        default: throw KBError("sous-commande inconnue: p \(sub!) (add|ren|rm|mv)")
+            try db.moveProjectInGroup(db.resolveProject(ref).id, to: n)
+        default: throw KBError("sous-commande inconnue: p \(sub!) (add|ren|rm|mv|grp)")
+        }
+
+    case "g":
+        let sub = a.pos.first
+        let rest = Array(a.pos.dropFirst())
+        switch sub {
+        case nil:
+            let ps = try db.projects()
+            for g in try db.groups() { emit("[\(g.name)] \(ps.filter { $0.group == g.id }.count)") }
+        case "add":
+            guard !rest.isEmpty else { throw KBError("usage: g add nom") }
+            try db.addGroup(rest.joined(separator: " "))
+        case "ren":
+            guard rest.count >= 2 else { throw KBError("usage: g ren groupe nom") }
+            try db.renameGroup(db.resolveGroup(rest[0]).id, rest.dropFirst().joined(separator: " "))
+        case "rm":
+            guard rest.count == 1 else { throw KBError("usage: g rm groupe") }
+            try db.deleteGroup(db.resolveGroup(rest[0]).id)
+        default: throw KBError("sous-commande inconnue: g \(sub!) (add|ren|rm)")
         }
 
     case "col":
@@ -255,8 +287,9 @@ func run(_ db: DB, _ argv: [String]) throws {
             emit(try db.columns(p.id).map { "\($0.name)\($0.done ? "✓" : "") \(board[$0.id]?.count ?? 0)" }.joined(separator: " | "))
         case "add":
             guard !rest.isEmpty else { throw KBError("usage: col add nom [-at n]") }
-            // Default: just before the last (done) column so done stays last.
-            let at = try intOpt(a, "-at") ?? max(0, try db.columns(p.id).count - 1)
+            // Default: just before the trailing done column(s); at the end if the last column isn't done.
+            let cs = try db.columns(p.id)
+            let at = try intOpt(a, "-at") ?? (cs.last?.done == true ? DB.doneIndex(cs)! : cs.count)
             try db.addColumn(p.id, rest.joined(separator: " "), at: at)
         case "ren":
             guard rest.count >= 2 else { throw KBError("usage: col ren col nom") }

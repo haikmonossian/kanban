@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 final class Store: ObservableObject {
     @Published private(set) var projects: [Project] = []
+    @Published private(set) var groups: [ProjectGroup] = []
     @Published private(set) var counts: [Int64: Int] = [:]
     @Published private(set) var columns: [Column] = []
     @Published private(set) var cards: [Int64: [Card]] = [:]
@@ -17,6 +18,10 @@ final class Store: ObservableObject {
     }
     @Published var error: String?
     @Published var renamingProject: Int64?
+    @Published var renamingGroup: Int64?
+    /// Rename drafts live here so a superseded rename is committed, not lost.
+    @Published var projectDraft = ""
+    @Published var groupDraft = ""
     @Published var renamingColumn: Int64?
 
     let db: DB
@@ -44,6 +49,7 @@ final class Store: ObservableObject {
         let v = db.dataVersion()
         do {
             projects = try db.projects()
+            groups = try db.groups()
             counts = try db.openCounts()
             if selected == nil || !projects.contains(where: { $0.id == selected }) {
                 selected = (try? db.currentProject().id) ?? projects.first?.id
@@ -68,12 +74,33 @@ final class Store: ObservableObject {
 
     // MARK: - Projects
 
-    func newProject() {
+    func newProject(in group: Int64? = nil) {
+        commitRenames()
         mutate {
-            let id = try db.addProject("Nouveau projet")
+            let id = try db.addProject("Nouveau projet", group: group)
+            if let g = group { try db.setGroupCollapsed(g, false) }
             selected = id
+            projectDraft = "Nouveau projet"
             renamingProject = id
         }
+    }
+
+    func startRenameProject(_ p: Project) {
+        commitRenames()
+        projectDraft = p.name
+        renamingProject = p.id
+    }
+
+    func startRenameGroup(_ g: ProjectGroup) {
+        commitRenames()
+        groupDraft = g.name
+        renamingGroup = g.id
+    }
+
+    /// Saves whatever rename is in progress (project and/or group).
+    func commitRenames() {
+        if let p = renamingProject { renameProject(p, projectDraft) }
+        if let g = renamingGroup { renameGroup(g, groupDraft) }
     }
     func renameProject(_ id: Int64, _ name: String) {
         let n = name.trimmingCharacters(in: .whitespaces)
@@ -82,10 +109,60 @@ final class Store: ObservableObject {
         mutate { try db.renameProject(id, n) }
     }
     func deleteProject(_ id: Int64) { mutate { try db.deleteProject(id) } }
-    func moveProjects(from: IndexSet, to: Int) {
-        guard let i = from.first else { return }
-        let id = projects[i].id
-        mutate { try db.moveProject(id, to: to > i ? to - 1 : to) }
+    /// Reorder inside one sidebar section (`ids` = that section's projects, in order).
+    func moveProjects(in ids: [Int64], from: IndexSet, to: Int) {
+        guard let i = from.first, i < ids.count, let last = ids.last else { return }
+        let id = ids[i]
+        let all = projects.map(\.id)
+        guard let src = all.firstIndex(of: id),
+              let target = to < ids.count ? all.firstIndex(of: ids[to]) : all.firstIndex(of: last).map({ $0 + 1 }) else { return }
+        mutate { try db.moveProject(id, to: target > src ? target - 1 : target) }
+    }
+
+    func projects(in group: Int64?) -> [Project] { projects.filter { $0.group == group } }
+    func openCount(group: Int64) -> Int { projects(in: group).reduce(0) { $0 + (counts[$1.id] ?? 0) } }
+
+    // MARK: - Groups
+
+    @discardableResult
+    func newGroup() -> Int64? {
+        commitRenames()
+        var id: Int64?
+        mutate {
+            let name = try db.freeGroupName("Nouveau groupe")
+            id = try db.addGroup(name)
+            groupDraft = name
+            renamingGroup = id
+        }
+        return id
+    }
+    func renameGroup(_ id: Int64, _ name: String) {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        renamingGroup = nil
+        guard !n.isEmpty else { return }
+        mutate { try db.renameGroup(id, n) }
+    }
+    func deleteGroup(_ id: Int64) { mutate { try db.deleteGroup(id) } }
+    func setCollapsed(_ id: Int64, _ on: Bool) { mutate { try db.setGroupCollapsed(id, on) } }
+    func setGroup(_ project: Int64, _ group: Int64?) {
+        mutate {
+            try db.setProjectGroup(project, group)
+            if let g = group { try db.setGroupCollapsed(g, false) }
+        }
+    }
+
+    /// Sidebar drag payloads are "kanban-project:<id>".
+    static let projectDragPrefix = "kanban-project:"
+    @discardableResult
+    func dropProjects(_ payload: [String], into group: Int64?) -> Bool {
+        let ids = payload.compactMap { $0.hasPrefix(Store.projectDragPrefix) ? Int64($0.dropFirst(Store.projectDragPrefix.count)) : nil }
+            .filter { id in projects.contains { $0.id == id } }
+        guard !ids.isEmpty else { return false }
+        mutate {
+            for id in ids { try db.setProjectGroup(id, group) }
+            if let g = group { try db.setGroupCollapsed(g, false) }
+        }
+        return true
     }
 
     // MARK: - Columns
@@ -93,7 +170,8 @@ final class Store: ObservableObject {
     func addColumn() {
         guard let p = selected else { return }
         mutate {
-            let id = try db.addColumn(p, "Nouvelle colonne", at: max(0, columns.count - 1))
+            let at = columns.last?.done == true ? DB.doneIndex(columns)! : columns.count
+            let id = try db.addColumn(p, "Nouvelle colonne", at: at)
             renamingColumn = id
         }
     }
@@ -140,11 +218,12 @@ final class Store: ObservableObject {
     func delete(_ id: Int64) { mutate { try db.deleteCards([id]) } }
 
     /// Drop handler: insert dragged cards before `before` (nil = end of column).
-    func drop(_ payload: [String], into col: Int64, before target: Int64?) {
+    @discardableResult
+    func drop(_ payload: [String], into col: Int64, before target: Int64?) -> Bool {
         let onBoard = Set(cards.values.flatMap { $0.map(\.id) })
         let ids = DB.unique(payload.compactMap(Store.cardId)).filter(onBoard.contains)
-        guard !ids.isEmpty else { return }
-        if let t = target, ids.contains(t) { return }
+        guard !ids.isEmpty else { return false }
+        if let t = target, ids.contains(t) { return true }
         let full = cards[col] ?? []
         let others = full.filter { !ids.contains($0.id) }
         var index: Int? = nil
@@ -155,6 +234,7 @@ final class Store: ObservableObject {
             index = i
         }
         mutate { try db.moveCards(ids, to: col, at: index) }
+        return true
     }
 
     /// Drag payloads are "kanban-card:<id>" so arbitrary dropped text is ignored.
