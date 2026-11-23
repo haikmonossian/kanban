@@ -154,6 +154,9 @@ struct Sidebar: View {
                         Button("Nouveau groupe…") { store.moveToNewGroup(p.id) }
                     }
                     Divider()
+                    Button("Utiliser ses colonnes pour les nouveaux projets") { store.saveColumnTemplate(from: p) }
+                    Button("Revenir aux colonnes par défaut") { store.resetColumnTemplate() }
+                    Divider()
                     Button("Supprimer…", role: .destructive) { confirmDelete = p }
                         .disabled(store.projects.count <= 1)
                 }

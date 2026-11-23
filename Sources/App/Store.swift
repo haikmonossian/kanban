@@ -305,11 +305,11 @@ final class Store: ObservableObject {
         }
     }
 
-    /// New projects will start with the current project's columns.
-    func saveColumnTemplate() {
-        guard let p = selected else { return }
-        mutate { try db.saveColumnTemplate(from: p) }
-        info = "Les nouveaux projets auront ces colonnes : \(columns.map(\.name).joined(separator: ", "))."
+    /// New projects will start with all of this project's columns (names, colors, done, sort).
+    func saveColumnTemplate(from project: Project) {
+        mutate { try db.saveColumnTemplate(from: project.id) }
+        let names = (try? db.columns(project.id).map(\.name)) ?? []
+        info = "Les nouveaux projets auront les colonnes de « \(project.name) » : \(names.joined(separator: ", "))."
     }
     func resetColumnTemplate() {
         mutate { try db.resetColumnTemplate() }
