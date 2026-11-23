@@ -56,7 +56,17 @@ struct BoardScreen: View {
         .padding(.top, 18)
         .navigationTitle(store.project?.name ?? "Kanban")
         .searchable(text: $search, placement: .toolbar, prompt: "Rechercher")
-        .toolbar { ToolbarItem(placement: .primaryAction) { AppearanceButton() } }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Picker("Tri", selection: Binding(get: { store.sortByPriority }, set: { store.setSortByPriority($0) })) {
+                    Text("Ajout").tag(false)
+                    Text("Priorité").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .help("Ordre des cartes : d'ajout (réordonnables à la main) ou par priorité")
+            }
+            ToolbarItem(placement: .primaryAction) { AppearanceButton() }
+        }
         .sheet(item: $editing) { CardEditor(card: $0) }
         .onAppear { quickFocus = true }
     }

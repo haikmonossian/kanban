@@ -17,6 +17,8 @@ final class Store: ObservableObject {
         }
     }
     @Published var error: String?
+    /// Cards sorted by priority instead of added/manual order (shared with `kb`).
+    @Published private(set) var sortByPriority = false
     /// Short confirmation shown to the user (e.g. template saved).
     @Published var info: String?
 
@@ -105,6 +107,7 @@ final class Store: ObservableObject {
             set(\.projects, try db.projects())
             set(\.groups, try db.groups())
             set(\.counts, try db.openCounts())
+            set(\.sortByPriority, try db.sortByPriority())
             if selected == nil || !projects.contains(where: { $0.id == selected }) {
                 selected = (try? db.currentProject().id) ?? projects.first?.id
             }
@@ -352,6 +355,8 @@ final class Store: ObservableObject {
         }
     }
 
+    func setSortByPriority(_ on: Bool) { mutate { try db.setSortByPriority(on) } }
+
     func setPrio(_ id: Int64, _ p: Int) { mutate { try db.updateCard(id, prio: p) } }
     func delete(_ id: Int64) { mutate { try db.deleteCards([id]) } }
     func move(_ id: Int64, to col: Int64) { mutate { try db.moveCards([id], to: col) } }
@@ -363,7 +368,8 @@ final class Store: ObservableObject {
         let ids = DB.unique(payload.compactMap { Store.id(from: $0, prefix: Store.cardPrefix) }).filter(onBoard.contains)
         guard !ids.isEmpty else { return false }
         if let t = target, ids.contains(t) { return true }
-        let full = cards[col] ?? []
+        // Positions are in added/manual order, whatever the display sort.
+        let full = (cards[col] ?? []).sorted { ($0.pos, $0.id) < ($1.pos, $1.id) }
         let others = full.filter { !ids.contains($0.id) }
         var index: Int? = nil
         if let t = target, var i = others.firstIndex(where: { $0.id == t }) {

@@ -14,6 +14,7 @@ kb rm id..
 kb p [add nom|ren @p nom|rm @p [-f]|mv @p n|grp @p groupe|-]   projets par groupe (* = courant ; mv n = position dans son groupe)
 kb g [add nom|ren groupe nom|rm groupe]  groupes de projets (rm = projets dégroupés)
 kb use @p                               projet par défaut
+kb sort [prio|ajout]                    ordre des cartes (partagé avec l'app)
 kb col [@p] [add nom [-at n]|ren col nom|rm col [-f]|mv col n|done col [on|off]]   (✓ = terminée)
 kb col [@p] save | kb col tpl [reset]   modèle de colonnes des nouveaux projets
 kb - <<'EOF'  (une commande par ligne, sans 'kb' ; erreurs : « !L<n> msg »)
@@ -29,6 +30,7 @@ let specs: [String: (valued: Set<String>, bools: Set<String>, proj: Bool)] = [
     "set": (["-T", "-d", "-t", "-p", "-c", "-at"], ["--top"], true),
     "show": ([], [], false), "rm": ([], [], false), "find": (["-n"], ["-a"], false),
     "use": ([], [], true),
+    "sort": ([], [], false),
     "p": ([], ["-f"], true),
     "g": ([], [], false),
     "col": (["-at"], ["-f"], true),
@@ -234,6 +236,14 @@ func run(_ db: DB, _ argv: [String]) throws {
     case "rm":
         guard !a.pos.isEmpty else { throw KBError("usage: rm id..") }
         try db.deleteCards(ids(a.pos))
+
+    case "sort":
+        switch a.pos.first.map(DB.norm) {
+        case nil: emit(try db.sortByPriority() ? "prio" : "ajout")
+        case "prio"?, "priorite"?: try db.setSortByPriority(true)
+        case "ajout"?: try db.setSortByPriority(false)
+        default: throw KBError("usage: sort [prio|ajout]")
+        }
 
     case "use":
         guard let ref = a.proj ?? a.pos.first else { throw KBError("usage: use @p") }

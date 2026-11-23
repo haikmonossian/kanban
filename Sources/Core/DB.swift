@@ -221,7 +221,9 @@ final class DB {
     /// Cards of a project grouped by column id, ordered.
     func board(_ project: Int64) throws -> [Int64: [Card]] {
         var r: [Int64: [Card]] = [:]
-        try run("SELECT \(DB.cardCols) FROM cards c JOIN cols k ON k.id=c.col WHERE k.project=? ORDER BY c.col,c.pos,c.id", [project]) {
+        // Display order: added/manual order, or priority first (3 → none) keeping that order between equals.
+        let order = try sortByPriority() ? "c.col, c.prio DESC, c.pos, c.id" : "c.col, c.pos, c.id"
+        try run("SELECT \(DB.cardCols) FROM cards c JOIN cols k ON k.id=c.col WHERE k.project=? ORDER BY \(order)", [project]) {
             let c = DB.cardFrom($0); r[c.col, default: []].append(c)
         }
         return r
@@ -292,6 +294,17 @@ final class DB {
         if let c = cur, let p = ps.first(where: { $0.id == c }) { return p }
         guard let first = ps.first else { throw KBError("aucun projet") }
         return first
+    }
+
+    /// Card order in the app and in `kb`: by priority (true) or added/manual order (false). Shared setting.
+    func sortByPriority() throws -> Bool {
+        var v = false
+        try run("SELECT v FROM meta WHERE k='sort'") { v = $0.t(0) == "prio" }
+        return v
+    }
+
+    func setSortByPriority(_ on: Bool) throws {
+        try run("INSERT INTO meta(k,v) VALUES('sort',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [on ? "prio" : "ajout"])
     }
 
     func setCurrent(_ project: Int64) throws {
