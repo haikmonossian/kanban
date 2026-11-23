@@ -223,6 +223,7 @@ struct Sidebar: View {
                 .frame(width: 12)
                 .opacity(hoveredGroup == g.id ? 1 : 0)
                 .animation(.easeOut(duration: 0.15), value: g.collapsed)
+                .padding(.trailing, 8)
         }
         .onHover { hoveredGroup = $0 ? g.id : (hoveredGroup == g.id ? nil : hoveredGroup) }
         .contentShape(Rectangle())
