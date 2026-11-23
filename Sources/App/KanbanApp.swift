@@ -19,7 +19,8 @@ struct KanbanApp: App {
         .commands {
             SidebarCommands()
             CommandGroup(after: .appInfo) {
-                Button("Installer kb pour Claude…") { ClaudeSetup.install() }
+                Button("Installer kb pour Claude Code…") { ClaudeSetup.installForCode() }
+                Button("Connecter au Chat de Claude…") { ClaudeSetup.connectChat() }
             }
             CommandGroup(replacing: .newItem) {
                 Button("Nouveau projet") { store.newProject() }

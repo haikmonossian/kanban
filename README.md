@@ -25,7 +25,8 @@ App kanban native macOS, pilotable par Claude via la CLI `kb` en dépensant trè
 - Données 100 % locales (SQLite), aucune connexion réseau.
 
 **Claude**
-- CLI `kb` : une ligne par carte, écritures silencieuses, plusieurs commandes en un appel.
+- Fonctionne dans **Claude Code** (skill + CLI `kb`) et dans le **Chat de Claude Desktop** (outil MCP intégré).
+- Très peu de tokens : une ligne par carte, écritures silencieuses, lectures plafonnées, plusieurs commandes en un appel.
 - L'app se met à jour en direct quand Claude modifie le tableau.
 
 ## Installer
@@ -34,7 +35,9 @@ App kanban native macOS, pilotable par Claude via la CLI `kb` en dépensant trè
 2. L'app n'est pas notarisée par Apple : au premier lancement, ferme l'alerte puis
    **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**.
    Vérifie l'empreinte : `shasum -a 256 Kanban-x.y.dmg` doit correspondre au `.sha256` de la release.
-3. Pour Claude : menu **Kanban → Installer kb pour Claude…**
+3. Pour Claude, menu **Kanban** :
+   - **Installer kb pour Claude Code…** si tu utilises Claude Code (terminal, onglet Code) ;
+   - **Connecter au Chat de Claude…** si tu utilises le Chat de Claude Desktop (puis relance Claude).
 
 Nécessite macOS 26 (Apple Silicon ou Intel).
 
