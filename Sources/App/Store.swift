@@ -288,15 +288,7 @@ final class Store: ObservableObject {
     func setColumnColor(_ id: Int64, _ hex: String?) { mutate { try db.setColumnColor(id, hex) } }
     func setColumnDone(_ id: Int64, _ on: Bool) { mutate { try db.setColumnDone(id, on) } }
     func deleteColumn(_ id: Int64) { mutate { try db.deleteColumn(id, force: true) } }
-    /// Column dragged by its header and dropped on another column: it takes that column's place.
-    @discardableResult
-    func dropColumn(_ payload: [String], onto target: Int64) -> Bool {
-        guard let id = payload.lazy.compactMap({ Store.id(from: $0, prefix: Store.columnPrefix) }).first,
-              id != target, columns.contains(where: { $0.id == id }),
-              let to = columns.firstIndex(where: { $0.id == target }) else { return false }
-        mutate { try db.moveColumn(id, to: to) }
-        return true
-    }
+    func moveColumn(_ id: Int64, to index: Int) { mutate { try db.moveColumn(id, to: index) } }
 
     func moveColumn(_ id: Int64, by delta: Int) {
         guard let i = columns.firstIndex(where: { $0.id == id }) else { return }
@@ -358,10 +350,8 @@ final class Store: ObservableObject {
 
     static let cardPrefix = "kanban-card:"
     static let projectPrefix = "kanban-project:"
-    static let columnPrefix = "kanban-column:"
     static func cardPayload(_ id: Int64) -> String { cardPrefix + String(id) }
     static func projectPayload(_ id: Int64) -> String { projectPrefix + String(id) }
-    static func columnPayload(_ id: Int64) -> String { columnPrefix + String(id) }
 
     private static func id(from s: String, prefix: String) -> Int64? {
         s.hasPrefix(prefix) ? Int64(s.dropFirst(prefix.count)) : nil

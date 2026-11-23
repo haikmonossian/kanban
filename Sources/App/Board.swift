@@ -6,19 +6,47 @@ struct BoardScreen: View {
     @State private var quick = ""
     @State private var search = ""
     @State private var editing: Card?
+    /// Column being moved with its grip: which one, where it started, how far it moved.
+    @State private var drag: (id: Int64, index: Int, dx: CGFloat, dy: CGFloat)?
     @FocusState private var quickFocus: Bool
+
+    static let columnWidth: CGFloat = 290
+    static let columnSpacing: CGFloat = 14
+    private static let step = columnWidth + columnSpacing
+
+    /// Where the dragged column would land: `index` among the other columns (the column passes every
+    /// neighbour whose middle it crosses) and the `gap` (0…n) where the insertion line is drawn.
+    /// nil when it would stay in place.
+    private var dropTarget: (gap: Int, index: Int)? {
+        guard let d = drag else { return nil }
+        let position = CGFloat(d.index) + d.dx / Self.step
+        let index = (0..<store.columns.count).filter { $0 != d.index && CGFloat($0) < position }.count
+        guard index != d.index else { return nil }
+        return (index < d.index ? index : index + 1, index)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             quickAdd
             ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: Self.columnSpacing) {
                     ForEach(Array(store.columns.enumerated()), id: \.element.id) { i, c in
+                        let moving = drag?.id == c.id
                         ColumnView(column: c, index: i, total: store.columns.count,
-                                   cards: filtered(store.cards[c.id] ?? []), editing: $editing)
+                                   cards: filtered(store.cards[c.id] ?? []), editing: $editing,
+                                   onGrip: { t in drag = (c.id, i, t.width, t.height) },
+                                   onGripEnd: endDrag)
+                            // Live preview: the column follows the pointer, lifted above the others.
+                            .offset(x: moving ? drag!.dx : 0, y: moving ? drag!.dy : 0)
+                            .scaleEffect(moving ? 1.03 : 1)
+                            .opacity(moving ? 0.85 : 1)
+                            .shadow(color: .black.opacity(moving ? 0.25 : 0), radius: 18, y: 8)
+                            .zIndex(moving ? 1 : 0)
                     }
                     addColumnButton
                 }
+                .overlay(alignment: .topLeading) { insertionLine }
+                .animation(.snappy(duration: 0.2), value: dropTarget?.gap)
                 .padding(.horizontal, 22)
                 .padding(.top, 4)
                 .padding(.bottom, 22)
@@ -59,6 +87,24 @@ struct BoardScreen: View {
         .padding(.horizontal, 22)
     }
 
+    /// Vertical line in the gap where the dragged column will land.
+    @ViewBuilder
+    private var insertionLine: some View {
+        if let gap = dropTarget?.gap {
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: 4)
+                .frame(maxHeight: .infinity)
+                .offset(x: CGFloat(gap) * Self.step - Self.columnSpacing / 2 - 2)
+                .transition(.opacity)
+        }
+    }
+
+    private func endDrag() {
+        if let d = drag, let target = dropTarget { store.moveColumn(d.id, to: target.index) }
+        withAnimation(.snappy(duration: 0.25)) { drag = nil }
+    }
+
     private var addColumnButton: some View {
         Button { store.addColumn() } label: {
             Label("Colonne", systemImage: "plus")
@@ -84,6 +130,9 @@ struct ColumnView: View {
     let total: Int
     let cards: [Card]
     @Binding var editing: Card?
+    /// Grip drag: translation while moving, then end.
+    let onGrip: (CGSize) -> Void
+    let onGripEnd: () -> Void
 
     @State private var adding = false
     @State private var newTitle = ""
@@ -126,7 +175,7 @@ struct ColumnView: View {
         }
         .padding(.top, 12)
         .padding(.horizontal, 4)
-        .frame(width: 290)
+        .frame(width: BoardScreen.columnWidth)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -137,9 +186,8 @@ struct ColumnView: View {
                 .strokeBorder(.white.opacity(targeted ? 0.35 : 0.14), lineWidth: 1)
         )
         .contentShape(Rectangle())
-        // Accepts cards (appended) and columns dragged by their header (reordered).
         .dropDestination(for: String.self) { items, _ in
-            store.drop(items, into: column.id, before: nil) || store.dropColumn(items, onto: column.id)
+            store.drop(items, into: column.id, before: nil)
         } isTargeted: { targeted = $0 }
         .animation(.easeOut(duration: 0.15), value: targeted)
         .confirmationDialog("Supprimer « \(column.name) » et ses \(store.cardCount(column.id)) cartes ?", isPresented: $confirmDelete) {
@@ -149,6 +197,7 @@ struct ColumnView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            grip
             Button { picking = true } label: {
                 Circle().fill(color).frame(width: 11, height: 11)
                     .overlay(Circle().strokeBorder(.primary.opacity(0.15)))
@@ -177,14 +226,24 @@ struct ColumnView: View {
             .buttonStyle(.plain).foregroundStyle(.secondary).help("Ajouter une carte")
             menu
         }
-        .padding(.horizontal, 10)
-        .contentShape(Rectangle())
-        // Drag a column by its header to reorder it.
-        .draggable(Store.columnPayload(column.id)) {
-            Label(column.name, systemImage: "rectangle.split.3x1")
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .glassEffect(.regular, in: .capsule)
-        }
+        .padding(.leading, 4)
+        .padding(.trailing, 10)
+    }
+
+    /// ⠿ handle: drag it to move the column (preview + insertion line are drawn by BoardScreen).
+    private var grip: some View {
+        Image(systemName: "circle.grid.2x3.fill")
+            .font(.system(size: 9))
+            .foregroundStyle(.tertiary)
+            .frame(width: 14, height: 20)
+            .contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
+            .gesture(
+                DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                    .onChanged { onGrip($0.translation) }
+                    .onEnded { _ in onGripEnd() }
+            )
+            .help("Glisser pour déplacer la colonne")
     }
 
     private var menu: some View {

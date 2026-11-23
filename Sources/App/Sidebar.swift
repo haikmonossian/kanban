@@ -21,7 +21,9 @@ struct Sidebar: View {
             // which changes the header width and makes the right-aligned count jump.
             ForEach(store.groups) { g in
                 Section {
-                    if isExpanded(g) { rows(store.projects(in: g.id), group: g.id) }
+                    // Always the same ForEach, fed an empty list when collapsed: the List then animates
+                    // row insertions/removals (a conditional block would just pop in and out).
+                    rows(isExpanded(g) ? store.projects(in: g.id) : [], group: g.id)
                 } header: {
                     groupHeader(g)
                 }

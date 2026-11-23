@@ -30,10 +30,9 @@ struct AppearanceButton: View {
 }
 
 enum Palette {
-    static let blue = Color(red: 0.30, green: 0.56, blue: 0.96)
-    static let amber = Color(red: 0.96, green: 0.64, blue: 0.18)
-    static let teal = Color(red: 0.25, green: 0.78, blue: 0.62)
-    static let extra = [Color(red: 0.55, green: 0.47, blue: 0.92), Color(red: 0.90, green: 0.38, blue: 0.56), Color(red: 0.36, green: 0.72, blue: 0.95)]
+    static let blue = hex(DB.autoPalette[0])!
+    static let amber = hex(DB.autoPalette[1])!
+    static let teal = hex(DB.autoPalette[2])!
 
     /// Choices offered when clicking a column's dot.
     static let swatches: [(name: String, hex: String)] = [
@@ -41,15 +40,9 @@ enum Palette {
         ("Rose", "#E66190"), ("Rouge", "#EB5757"), ("Cyan", "#5CB8F2"), ("Gris", "#8E8E93"),
     ]
 
-    /// Custom color if set, otherwise automatic: first column blue, second amber, last teal, others from `extra`.
-    static func color(for c: Column, index i: Int, total n: Int) -> Color {
-        if let custom = c.color.flatMap(hex) { return custom }
-        if n > 1 && i == n - 1 { return teal }
-        switch i {
-        case 0: return blue
-        case 1: return amber
-        default: return extra[(i - 2) % extra.count]
-        }
+    /// Custom color if set, otherwise the automatic one for this position.
+    static func color(for c: Column, index: Int, total: Int) -> Color {
+        hex(c.color ?? DB.autoColorHex(index, of: total)) ?? blue
     }
 
     static func hex(_ s: String) -> Color? {

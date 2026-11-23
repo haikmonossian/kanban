@@ -445,10 +445,31 @@ final class DB {
         let name = try DB.cleanName(name)
         return try tx {
             guard try self.project(project) != nil else { throw KBError("projet introuvable") }
+            try freezeColors(project)
             try run("INSERT INTO cols(project,name,pos) VALUES(?,?,?)", [project, name, Int64.max / 2])
             let id = lastId
             try renumber("cols", DB.moving(id, in: columns(project).map(\.id), to: index))
             return id
+        }
+    }
+
+    /// Automatic column colors (shared with the app): first blue, second amber, last teal, others cycle.
+    static let autoPalette = ["#4D8FF5", "#F5A32E", "#40C79E", "#8C78EB", "#E66190", "#5CB8F2"]
+
+    static func autoColorHex(_ i: Int, of n: Int) -> String {
+        if n > 1 && i == n - 1 { return autoPalette[2] }
+        switch i {
+        case 0: return autoPalette[0]
+        case 1: return autoPalette[1]
+        default: return autoPalette[3 + (i - 2) % 3]
+        }
+    }
+
+    /// Pins automatic colors before columns change position, so moving/adding/deleting one doesn't repaint the others.
+    private func freezeColors(_ project: Int64) throws {
+        let cs = try columns(project)
+        for (i, c) in cs.enumerated() where c.color == nil {
+            try run("UPDATE cols SET color=? WHERE id=?", [DB.autoColorHex(i, of: cs.count), c.id])
         }
     }
 
@@ -485,6 +506,7 @@ final class DB {
             if try columns(c.project).count <= 1 { throw KBError("impossible de supprimer la dernière colonne") }
             let n = try int("SELECT count(*) FROM cards WHERE col=?", [id])
             if n > 0 && !force { throw KBError("colonne non vide (\(n) cartes), ajoute -f") }
+            try freezeColors(c.project)
             try run("DELETE FROM cols WHERE id=?", [id])
         }
     }
@@ -492,6 +514,7 @@ final class DB {
     func moveColumn(_ id: Int64, to index: Int) throws {
         try tx {
             guard let c = try column(id) else { throw KBError("colonne introuvable") }
+            try freezeColors(c.project)
             try renumber("cols", DB.moving(id, in: columns(c.project).map(\.id), to: index))
         }
     }
