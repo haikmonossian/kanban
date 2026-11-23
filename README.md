@@ -19,13 +19,12 @@ Il faut macOS 26 (Tahoe).
 
 ## Connecter Claude
 
-Dans l'app, menu **Kanban** en haut à gauche de l'écran. Choisis selon l'endroit où tu utilises Claude
-(**les deux si tu utilises les deux**, ils partagent le même kanban) :
+Dans l'app, menu **Kanban** (en haut à gauche de l'écran) → **Connecter au Chat de Claude…**,
+puis quitte Claude (⌘Q) et rouvre-le. C'est tout : tu peux gérer ton kanban depuis le Chat.
 
-- **Connecter au Chat de Claude…** → pour l'onglet **Chat** de l'app Claude.
-  Quitte ensuite Claude (⌘Q) et rouvre-le.
-- **Installer kb pour Claude Code…** → pour l'onglet **Code** ou Claude dans un terminal.
-  C'est la version qui **consomme le moins** (le kanban ne coûte rien tant que tu n'en parles pas).
+> **Pour les développeurs** qui utilisent Claude Code (onglet Code ou terminal) : menu **Kanban → Installer kb pour Claude Code…**.
+> Cette version consomme encore moins de tokens (rien tant que tu ne parles pas du kanban).
+> Les deux peuvent être installées ensemble, elles partagent le même kanban.
 
 ## Utiliser avec Claude
 
