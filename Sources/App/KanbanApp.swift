@@ -19,8 +19,9 @@ struct KanbanApp: App {
         .commands {
             SidebarCommands()
             CommandGroup(after: .appInfo) {
-                Button("Installer kb pour Claude Code…") { ClaudeSetup.installForCode() }
+                // One or the other: Chat (most users) first; Code uses fewer tokens.
                 Button("Connecter au Chat de Claude…") { ClaudeSetup.connectChat() }
+                Button("Installer kb pour Claude Code…") { ClaudeSetup.installForCode() }
             }
             CommandGroup(replacing: .newItem) {
                 Button("Nouveau projet") { store.newProject() }
