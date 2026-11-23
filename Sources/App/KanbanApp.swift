@@ -128,6 +128,7 @@ struct RootView: View {
 struct Sidebar: View {
     @EnvironmentObject var store: Store
     @State private var confirmDelete: Project?
+    @State private var hoveredGroup: Int64?
     @FocusState private var renameFocus: Bool
     @FocusState private var groupFocus: Bool
 
@@ -199,11 +200,6 @@ struct Sidebar: View {
     @ViewBuilder
     private func groupHeader(_ g: ProjectGroup) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .rotationEffect(.degrees(g.collapsed ? 0 : 90))
-                .frame(width: 10)
-                .animation(.easeOut(duration: 0.15), value: g.collapsed)
             Image(systemName: "folder").font(.system(size: 11))
             if store.renamingGroup == g.id {
                 TextField("Nom", text: $store.groupDraft)
@@ -219,9 +215,21 @@ struct Sidebar: View {
             Spacer(minLength: 4)
             let n = store.openCount(group: g.id)
             if n > 0 { Text("\(n)").monospacedDigit().foregroundStyle(.secondary) }
+            // Chevron on the right like the system one, but its slot is always reserved
+            // (only its opacity changes on hover), so the count never moves.
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .rotationEffect(.degrees(g.collapsed ? 0 : 90))
+                .frame(width: 12)
+                .opacity(hoveredGroup == g.id ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: g.collapsed)
         }
+        .onHover { hoveredGroup = $0 ? g.id : (hoveredGroup == g.id ? nil : hoveredGroup) }
         .contentShape(Rectangle())
         .onTapGesture { if store.renamingGroup != g.id { store.setCollapsed(g.id, !g.collapsed) } }
+        // A click on the header must only toggle the group: no selection / focus highlight.
+        .selectionDisabled()
+        .focusEffectDisabled()
         .dropDestination(for: String.self) { items, _ in store.dropProjects(items, into: g.id) }
         .contextMenu {
             Button("Nouveau projet dans ce groupe") { store.newProject(in: g.id) }
